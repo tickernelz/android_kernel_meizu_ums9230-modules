@@ -691,7 +691,7 @@ static int ilitek_spi_probe(struct spi_device *spi)
 #if GENERIC_KERNEL_IMAGE
 	ilits->fw_open = REQUEST_FIRMWARE;
 #else
-	ilits->fw_open = REQUEST_FIRMWARE;
+	ilits->fw_open = FILP_OPEN;
 #endif
 	ilits->fw_upgrade_mode = UPGRADE_IRAM;
 	ilits->mp_move_code = ili_move_mp_code_iram;
