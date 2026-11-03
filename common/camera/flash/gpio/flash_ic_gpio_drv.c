@@ -34,7 +34,6 @@ enum {
 
 struct flash_driver_data {
 	int gpio_tab[FLASH_GPIO_MAX];
-	u32 torch_led_index;
 };
 
 static const char *const flash_gpio_names[FLASH_GPIO_MAX] = {
