@@ -56,7 +56,8 @@
 
 #define FTS_MAX_CHIP_IDS        8
 
-#define FTS_CHIP_TYPE_MAPPING {{0x29, 0x87, 0x25, 0x87, 0x25, 0x87, 0xA5, 0x00, 0x00}}
+#define FTS_CHIP_TYPE_MAPPING {{0x28, 0x80, 0x57, 0x80, 0x57, 0x80, 0xA7, 0x00, 0x00}}
+#define FTS_CHIP_ID_MAPPING {{0x28, {0x8057}}}
 
 
 #define FILE_NAME_LENGTH                    128
@@ -149,11 +150,6 @@ struct ts_ic_info {
 /*****************************************************************************
 * DEBUG function define here
 *****************************************************************************/
-extern bool fts_debug_flag;
-#define FTS_DBG(fmt, args...) do { \
-    if (fts_debug_flag) printk(KERN_ERR "[FTS_TS]%s:"fmt"\n", __func__, ##args); \
-} while (0)
-
 #if FTS_DEBUG_EN
 #define FTS_DEBUG(fmt, args...) do { \
     printk("[FTS_TS]%s:"fmt"\n", __func__, ##args); \

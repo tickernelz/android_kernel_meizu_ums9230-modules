@@ -1,5 +1,5 @@
 #
-# focaltech_ft8725_spi.ko
+# focaltech_spi_v4_1.ko
 #
 # Makefile: for external make invocation
 #
@@ -8,7 +8,7 @@
 #   done in this Makefile
 #
 
-KO_MODULE_NAME := focaltech_ft8725_spi_ts
+KO_MODULE_NAME := focaltech_spi_v4_1
 KO_MODULE_OUT := $(BSP_MODULES_OUT)/$(KO_MODULE_NAME)
 KO_MODULE_KBUILD := $(CURDIR)/Kbuild
 

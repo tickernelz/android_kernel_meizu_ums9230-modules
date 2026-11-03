@@ -52,22 +52,10 @@
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
-u8 fw_file[] = {
-#include FTS_UPGRADE_FW_FILE
-};
-
-u8 fw_file2[] = {
-#include FTS_UPGRADE_FW2_FILE
-};
-
-u8 fw_file3[] = {
-#include FTS_UPGRADE_FW3_FILE
-};
-
 struct upgrade_module module_list[] = {
-    {FTS_MODULE_ID, FTS_MODULE_NAME, fw_file, sizeof(fw_file)},
-    {FTS_MODULE2_ID, FTS_MODULE2_NAME, fw_file2, sizeof(fw_file2)},
-    {FTS_MODULE3_ID, FTS_MODULE3_NAME, fw_file3, sizeof(fw_file3)},
+    {FTS_MODULE_ID, FTS_MODULE_NAME, NULL, 0},
+    {FTS_MODULE2_ID, FTS_MODULE2_NAME, NULL, 0},
+    {FTS_MODULE3_ID, FTS_MODULE3_NAME, NULL, 0},
 };
 
 struct upgrade_setting_nf upgrade_setting_list[] = {
@@ -1118,8 +1106,6 @@ static int fts_fwupg_get_module_info(struct fts_upgrade *upg)
         FTS_ERROR("upg/ts_data is null");
         return -EINVAL;
     }
-	FTS_INFO("sizeof fwfile:%u", sizeof(fw_file));
-	FTS_INFO("fw file 3:%x, 4: %x, end: %x", info->fw_file[3], info->fw_file[3], info->fw_file[sizeof(fw_file) -1]);
     if (FTS_GET_MODULE_NUM > 1) {
         FTS_INFO("module id:%04x", upg->module_id);
         for (i = 0; i < FTS_GET_MODULE_NUM; i++) {
@@ -1229,7 +1215,6 @@ static int fts_fwupg_get_fw_file(struct fts_upgrade *upg)
     }
 	
     if (get_fw_i_flag) {
-		FTS_INFO("fts_get_fw_file_via_i");
         ret = fts_get_fw_file_via_i(upg);
     }
 
@@ -1279,7 +1264,6 @@ static void fts_fwupg_work(struct work_struct *work)
         ret = fts_read_reg(FTS_REG_CHIP_ID, &chip_id);
         FTS_INFO("read chip id:0x%02x", chip_id);
     }
-    check_current_mode();
 }
 
 int fts_fwupg_init(struct fts_ts_data *ts_data)
