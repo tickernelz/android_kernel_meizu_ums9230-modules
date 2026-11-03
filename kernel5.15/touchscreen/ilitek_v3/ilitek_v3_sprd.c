@@ -115,8 +115,8 @@ void ili_input_register(void)
 	/* register the input device to input sub-system */
 	if (input_register_device(ilits->input) < 0) {
 		ILI_ERR("Failed to register touch input device\n");
-		input_unregister_device(ilits->input);
 		input_free_device(ilits->input);
+		ilits->input = NULL;
 	}
 }
 
@@ -154,11 +154,24 @@ void ili_input_pen_register(void)
 	/* register the input device to input sub-system */
 	if (input_register_device(ilits->input_pen) < 0) {
 		ILI_ERR("Failed to register touch input device\n");
-		input_unregister_device(ilits->input_pen);
 		input_free_device(ilits->input_pen);
+		ilits->input_pen = NULL;
+		return;
 	}
 	ILI_INFO("Input Pen device for Single Touch\n");
 	ILI_DBG("Input pen Register.\n");
+}
+
+void ili_input_unregister(void)
+{
+	if (ilits->input_pen) {
+		input_unregister_device(ilits->input_pen);
+		ilits->input_pen = NULL;
+	}
+	if (ilits->input) {
+		input_unregister_device(ilits->input);
+		ilits->input = NULL;
+	}
 }
 
 
@@ -423,10 +436,11 @@ static struct attribute_group properties_attr_group = {
 	.attrs = properties_attrs,
 };
 
+static struct kobject *properties_kobj;
+
 static void ilitek_ts_virtual_keys_init(void)
 {
 	int ret;
-	struct kobject *properties_kobj;
 
 	printk("%s\n", __func__);
 
@@ -435,6 +449,15 @@ static void ilitek_ts_virtual_keys_init(void)
 		ret = sysfs_create_group(properties_kobj, &properties_attr_group);
 	if (!properties_kobj || ret)
 		pr_err("failed to create board_properties\n");
+}
+
+static void ilitek_ts_virtual_keys_exit(void)
+{
+	if (!properties_kobj)
+		return;
+	sysfs_remove_group(properties_kobj, &properties_attr_group);
+	kobject_put(properties_kobj);
+	properties_kobj = NULL;
 }
 
 static int ilitek_plat_probe(void)
@@ -524,6 +547,7 @@ static int __init ilitek_plat_dev_init(void)
 static void __exit ilitek_plat_dev_exit(void)
 {
 	ILI_INFO("remove plat dev\n");
+	ilitek_ts_virtual_keys_exit();
 	ili_dev_remove(ENABLE);
 }
 

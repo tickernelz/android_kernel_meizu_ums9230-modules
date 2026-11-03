@@ -1590,6 +1590,7 @@ extern int ili_spi_write_then_read_direct(struct spi_device *spi,
 extern void ili_plat_regulator_power_on(bool status);
 extern void ili_input_register(void);
 extern void ili_input_pen_register(void);
+extern void ili_input_unregister(void);
 extern void ili_irq_disable(void);
 extern void ili_irq_enable(void);
 extern void ili_tp_reset(void);
@@ -1605,6 +1606,7 @@ extern int ili_v3_drm_check_dt(struct device_node *np);
 
 /* Prototypes for miscs */
 extern void ili_node_init(void);
+extern void ili_node_exit(void);
 extern void ili_dump_data(void *data, int type, int len, int row_len, const char *name);
 extern u8 ili_calc_packet_checksum(u8 *packet, int len);
 extern int ili_katoi(char *str);

@@ -3957,3 +3957,11 @@ void ili_node_init(void)
 		}
 	}
 }
+
+void ili_node_exit(void)
+{
+	if (!proc_dir_ilitek)
+		return;
+	remove_proc_subtree("ilitek", NULL);
+	proc_dir_ilitek = NULL;
+}
