@@ -628,7 +628,6 @@ void ili_set_gesture_symbol(void)
 		return;
 	}
 
-	ILI_INFO(" single_tap = %d\n", ilits->ges_sym.single_tap);
 	ILI_DBG(" double_tap = %d\n", ilits->ges_sym.double_tap);
 	ILI_DBG(" alphabet_line_2_top = %d\n", ilits->ges_sym.alphabet_line_2_top);
 	ILI_DBG(" alphabet_line_2_bottom = %d\n", ilits->ges_sym.alphabet_line_2_bottom);
@@ -977,7 +976,11 @@ int ili_touch_esd_gesture_iram(void)
 
 	/* polling another specific register to see if gesutre is enabled properly */
 	do {
-		ili_spi_ice_mode_read(slave_ges_pwd_addr, &slave_answer, sizeof(u32), MASTER);
+		ret = ili_ice_mode_read(ges_pwd_addr, &answer, pwd_len);
+		if (ret < 0) {
+			ILI_ERR("Read gesture answer error\n");
+			goto fail;
+		}
 
 		if (answer != ges_run)
 			ILI_INFO("ret = 0x%X, answer = 0x%X\n", answer, ges_run);
@@ -1325,64 +1328,6 @@ void ili_touch_release_all_point(void)
 	input_sync(ilits->input);
 }
 
-
-void ili_report_touch_debug_info(u8 *buf) {
-	int rlen = 3;
-	u8 checksum = 0;
-	u8 pack_checksum = 0;
-
-	if (buf == NULL) {
-		ILI_ERR("Argument null\n");
-		return;
-	}
-
-	checksum = ili_calc_packet_checksum(buf, rlen - 1);
-	pack_checksum = buf[rlen-1];
-	if (checksum != pack_checksum) {
-		ILI_ERR("Debug info Checksum Error (0x%X)! Pack = 0x%X \n", checksum, pack_checksum);
-		return;
-	}
-
-	if (ilits->di.nGlove != ((buf[1] >> 7) & 1) ||
-		ilits->di.nHopping != ((buf[1] >> 6) & 1) ||
-		ilits->di.nCharge != ((buf[1] >> 5) & 1) ||
-		ilits->di.nNoiseWarning != ((buf[1] >> 4) & 1) ||
-		ilits->di.nRebase != ((buf[1] >> 3) & 1) ||
-		ilits->di.nBending != ((buf[1] >> 2) & 1) ||
-		ilits->di.nGndUnstable != ((buf[1] >> 1) & 1) ||
-		ilits->di.nPalm != ((buf[1] >> 0) & 1) )
-	{
-		ILI_INFO("Data[1]-[Byte0] = %#x Binary = %d %d %d %d  %d %d %d %d \n",
-			buf[1],
-			(buf[1] >> 7) & 1,
-			(buf[1] >> 6) & 1,
-			(buf[1] >> 5) & 1,
-			(buf[1] >> 4) & 1,
-			(buf[1] >> 3) & 1,
-			(buf[1] >> 2) & 1,
-			(buf[1] >> 1) & 1,
-			(buf[1] >> 0) & 1);//12 = 0001 0010
-	}
-
-	ilits->di.nGlove = (buf[1] >> 7) & 1;
-	ilits->di.nHopping = (buf[1] >> 6) & 1;
-	ilits->di.nCharge = (buf[1] >> 5) & 1;
-	ilits->di.nNoiseWarning = (buf[1] >> 4) & 1;
-	ilits->di.nRebase = (buf[1] >> 3) & 1;
-	ilits->di.nBending = (buf[1] >> 2) & 1;
-	ilits->di.nGndUnstable = (buf[1] >> 1) & 1;
-	ilits->di.nPalm = (buf[1] >> 0) & 1;
-
-	ILI_DBG("Byte[0]:\n");
-	ILI_DBG(" Glove = %#x\n", ilits->di.nGlove);
-	ILI_DBG(" Hopping = %#x\n", ilits->di.nHopping);
-	ILI_DBG(" Charge = %#x\n", ilits->di.nCharge);
-	ILI_DBG(" NoiseWarning = %#x\n", ilits->di.nNoiseWarning);
-	ILI_DBG(" Rebase = %#x\n", ilits->di.nRebase);
-	ILI_DBG(" Bending = %#x\n", ilits->di.nBending);
-	ILI_DBG(" GndUnstable = %#x\n", ilits->di.nGndUnstable);
-	ILI_DBG(" Palm = %#x\n", ilits->di.nPalm);
-}
 
 static struct ilitek_touch_info touch_info[MAX_TOUCH_NUM + MAX_PEN_NUM];
 
@@ -2446,31 +2391,12 @@ void ili_report_gesture_mode(u8 *buf, int len)
 	ILI_INFO("gesture code = 0x%x, score = %d\n", gc->code, score);
 
 	switch (gc->code) {
-	case GESTURE_SINGLECLICK:
-		ILI_INFO("Single Click key event\n");
-		if((ilits->sys_gesture_type & 0x0d) == 0x01){
-			input_report_key(input, BTN_TRIGGER_HAPPY3, 1);
-			input_sync(input);
-			input_report_key(input, BTN_TRIGGER_HAPPY3, 0);
-			input_sync(input);
-		}else{
-			ILI_ERR("sys_gesture_type err %d\n",ilits->sys_gesture_type);
-		}
-		gc->type  = GESTURE_SINGLECLICK;
-		gc->clockwise = 1;
-		gc->pos_end.x = gc->pos_start.x;
-		gc->pos_end.y = gc->pos_start.y;
-		break;
 	case GESTURE_DOUBLECLICK:
 		ILI_INFO("Double Click key event\n");
-		if((ilits->sys_gesture_type & 0x0e) == 0x02){
-			input_report_key(input, KEY_GESTURE_POWER, 1);
-			input_sync(input);
-			input_report_key(input, KEY_GESTURE_POWER, 0);
-			input_sync(input);
-		}else{
-			ILI_ERR("sys_gesture_type err %d\n",ilits->sys_gesture_type);
-		}
+		input_report_key(input, KEY_GESTURE_POWER, 1);
+		input_sync(input);
+		input_report_key(input, KEY_GESTURE_POWER, 0);
+		input_sync(input);
 		gc->type  = GESTURE_DOUBLECLICK;
 		gc->clockwise = 1;
 		gc->pos_end.x = gc->pos_start.x;

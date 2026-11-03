@@ -246,7 +246,7 @@ int ili_fw_dump_iram_data(u32 start, u32 end, bool save, bool mcu)
 			ret = -ENOMEM;
 			goto out;
 #else
-		f = filp_open(DUMP_IRAM_PATH, O_WRONLY | O_CREAT | O_TRUNC, 644);
+		f = revo_filp_open(DUMP_IRAM_PATH, O_WRONLY | O_CREAT | O_TRUNC, 644);
 		if (ERR_ALLOC_MEM(f)) {
 			ILI_ERR("Failed to open the file at %ld.\n", PTR_ERR(f));
 			ret = -ENOMEM;
@@ -260,7 +260,7 @@ int ili_fw_dump_iram_data(u32 start, u32 end, bool save, bool mcu)
 		vfs_write(f, ilits->update_buf, len, &pos);
 		set_fs(old_fs);
 #else
-		kernel_write(f, ilits->update_buf, len, &pos);
+		revo_kernel_write(f, ilits->update_buf, len, &pos);
 #endif
 		filp_close(f, NULL);
 		ILI_INFO("Save iram data to %s\n", DUMP_IRAM_PATH);
@@ -603,20 +603,14 @@ static int ilitek_tddi_fw_update_block_info(u8 *pfw)
 		/*CustomerType 5 bits*/
 		ilits->rib.nCustomerType = (ilits->chip->core_ver >= CORE_VER_1470) ? ilits->rib.nCustomerType : POSITION_CUSTOMER_TYPE_OFF;
 		ilits->customertype_off = POSITION_CUSTOMER_TYPE_OFF;
-		ilits->rib.nDemoPacketID = 0xFF;
-		ilits->rib.nDemoPenType = POSITION_PEN_TYPE_OFF;
-		ilits->rib.nDemoCustomerType = POSITION_CUSTOMER_TYPE_OFF_3BITS;
-		ilits->rib.nDemoFingerType = 0x07;
 	}
 
 	ILI_INFO("report_info_block : nReportByPixel = %d, nIsHostDownload = %d, nIsSPIICE = %d, nIsSPISLAVE = %d, nIsI2C = %d\n",
 		ilits->rib.nReportByPixel, ilits->rib.nIsHostDownload, ilits->rib.nIsSPIICE, ilits->rib.nIsSPISLAVE, ilits->rib.nIsI2C);
 
-	ILI_INFO("report_info_block : nReserved00 = %d, nReportResolutionMode = %d, nCustomerType = %d\n",
-		ilits->rib.nReserved00, ilits->rib.nReportResolutionMode, ilits->rib.nCustomerType);
-	
-	ILI_INFO("report_info_block : nDemoPacketID = %x,  nDemoFingerType = %x, nDemoCustomerType = %x, nDemoPenType = %x\n",
-	ilits->rib.nDemoPacketID, ilits->rib.nDemoFingerType, ilits->rib.nDemoCustomerType, ilits->rib.nDemoPenType);
+	ILI_INFO("report_info_block : nReserved00 = %d, nReportResolutionMode = %d, nCustomerType = %d, nReserved02 = %x,  nReserved03 = %x\n",
+		ilits->rib.nReserved00, ilits->rib.nReportResolutionMode, ilits->rib.nCustomerType, ilits->rib.nReserved02, ilits->rib.nReserved03);
+
 
 	ILI_INFO("PenType = 0x%x, Customer Type OFF = 0x%x\n", ilits->PenType, ilits->customertype_off);
 
@@ -651,13 +645,40 @@ static int ilitek_tddi_fw_update_block_info(u8 *pfw)
 	return 0;
 }
 
+static int ilitek_tddi_fw_ili_request(void)
+{
+	const struct firmware *fw = NULL;
+	int ret;
+
+	if (ilits->md_fw_ili)
+		return 0;
+
+	ret = request_firmware(&fw, ILI_FW_REQUEST_PATH, ilits->dev);
+	if (ret < 0) {
+		ILI_ERR("Request ILI firmware %s failed, %d\n", ILI_FW_REQUEST_PATH, ret);
+		return ret;
+	}
+
+	ilits->md_fw_ili = vmalloc(fw->size);
+	if (!ilits->md_fw_ili) {
+		release_firmware(fw);
+		return -ENOMEM;
+	}
+
+	memcpy(ilits->md_fw_ili, fw->data, fw->size);
+	ilits->md_fw_ili_size = fw->size;
+	release_firmware(fw);
+	ILI_INFO("ILI firmware %s, size = %d\n", ILI_FW_REQUEST_PATH, ilits->md_fw_ili_size);
+	return 0;
+}
+
 static int ilitek_tddi_fw_ili_convert(u8 *pfw)
 {
 	int i, size, blk_num = 0, blk_map = 0, num;
 	int b0_addr = 0, b0_num = 0;
 
-	if (ERR_ALLOC_MEM(ilits->md_fw_ili))
-		return -ENOMEM;
+	if (ilitek_tddi_fw_ili_request() < 0)
+		return -ENOENT;
 
 	CTPM_FW = ilits->md_fw_ili;
 	size = ilits->md_fw_ili_size;
@@ -886,7 +907,7 @@ static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
 		ILI_INFO("fsize = %d\n", (int)ilits->tp_fw.size);
 #endif
 #else
-		f = filp_open(ilits->md_fw_filp_path, O_RDONLY, 0644);
+		f = revo_filp_open(ilits->md_fw_filp_path, O_RDONLY, 0644);
 		if (ERR_ALLOC_MEM(f)) {
 			ILI_ERR("Failed to open the file, %ld\n", PTR_ERR(f));
 			ret = -1;
@@ -924,7 +945,7 @@ static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
 		vfs_read(f, (u8 *)ilits->tp_fw.data, fsize, &pos);
 		set_fs(old_fs);
 #else
-		kernel_read(f, (u8 *)ilits->tp_fw.data, fsize, &pos);
+		revo_kernel_read(f, (u8 *)ilits->tp_fw.data, fsize, &pos);
 #endif
 		filp_close(f, NULL);
 		ilits->tp_fw.size = fsize;

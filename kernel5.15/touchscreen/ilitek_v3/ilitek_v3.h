@@ -42,7 +42,6 @@
 #include <linux/regulator/consumer.h>
 #include <linux/power_supply.h>
 #include <linux/fs.h>
-#include <linux/pinctrl/pinctrl.h>
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 #endif
@@ -73,6 +72,8 @@
 #include <linux/security.h>
 #include <linux/mount.h>
 #include <linux/firmware.h>
+#include "revo_gki.h"
+#include "tp_common.h"
 
 #ifdef CONFIG_OF
 #include <linux/of_address.h>
@@ -94,7 +95,7 @@
 #include <linux/msm_drm_notify.h>
 #endif
 
-#define DRIVER_VERSION			"3.0.9.3.230803_1206"
+#define DRIVER_VERSION			"3.0.9.3.230803"
 
 #define ENABLE			1
 #define DISABLE			0
@@ -134,17 +135,13 @@
 #define RESUME_BY_DDI				DISABLE
 #define MP_INT_LEVEL				DISABLE
 #define PLL_CLK_WAKEUP_TP_RESUME	DISABLE
-#define CHARGER_NOTIFIER_CALLBACK	ENABLE
+#define CHARGER_NOTIFIER_CALLBACK	DISABLE
 #define ENABLE_EDGE_PALM_PARA		DISABLE
 #define MULTI_REPORT_RATE			DISABLE
 #define ENGINEER_FLOW				ENABLE
 #define DMESG_SEQ_FILE				ENABLE
-#ifndef CFG_CTS_FOR_GKI
-#define GENERIC_KERNEL_IMAGE    ENABLE/*follow gki */
-#else
-#define GENERIC_KERNEL_IMAGE    DISABLE/*follow gki */
-#endif
-#define SUSPEND_RESUME_SUPPORT		ENABLE
+#define GENERIC_KERNEL_IMAGE		DISABLE
+#define SUSPEND_RESUME_SUPPORT		DISABLE
 #define ENABLE_GET_ALL_INFO 		DISABLE /*GET_ALL_INFO options*/
 #define ENABLE_PEN_MODE 			DISABLE	/*Pen mode options*/
 #define ENABLE_CASCADE  			DISABLE
@@ -187,7 +184,7 @@
 #define SPI_DMA_TRANSFER_SPLIT		DISABLE
 #endif
 #define SPI_DMA_TRANSFER_SPLIT_OLD	DISABLE
-#define SPRD_SYSFS_SUSPEND_RESUME	ENABLE
+#define SPRD_SYSFS_SUSPEND_RESUME	DISABLE
 #define MTK_DISP_SUSPEND_RESUME		DISABLE
 #define QCOM_PANEL_SUSPEND_RESUME	DISABLE
 
@@ -214,6 +211,7 @@ ccflags-$(CONFIG_DRM_MEDIATEK_V2) += -I$(srctree)/drivers/gpu/drm/mediatek/media
 #define POWER_STATUS_PATH			"/sys/class/power_supply/battery/status"
 #define DUMP_FLASH_PATH				"/sdcard/flash_dump"
 #define DUMP_IRAM_PATH				"/sdcard/iram_dump"
+#define ILI_FW_REQUEST_PATH			"ILITEK_FW_DEF.ili"
 
 /* Debug messages */
 #define DEBUG_NONE		0
@@ -222,19 +220,19 @@ ccflags-$(CONFIG_DRM_MEDIATEK_V2) += -I$(srctree)/drivers/gpu/drm/mediatek/media
 
 #define ILI_INFO(fmt, arg...)						\
 ({									\
-	pr_info("ILITEK:[INFO] (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
+	pr_info("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
 })									\
 
 #define ILI_ERR(fmt, arg...)						\
 ({									\
-	pr_err("ILITEK:[ERR] (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
+	pr_err("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
 })									\
 
 extern bool debug_en;
 #define ILI_DBG(fmt, arg...)						\
 do {									\
 	if (debug_en)						\
-	pr_info("ILITEK:[DBG] (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
+	pr_info("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
 } while (0)
 
 #define ERR_ALLOC_MEM(X)	((IS_ERR(X) || X == NULL) ? 1 : 0)
@@ -287,7 +285,8 @@ enum TP_SPI_CLK_LIST {
 
 enum TP_PLAT_TYPE {
 	TP_PLAT_MTK = 0,
-	TP_PLAT_QCOM
+	TP_PLAT_QCOM,
+	TP_PLAT_SPRD
 };
 
 enum TP_RST_METHOD {
@@ -516,7 +515,6 @@ struct gesture_symbol {
 	u8 alphabet_two_line_2_bottom :1;
 	u8 alphabet_F                 :1;
 	u8 alphabet_AT                :1;
-	u8 single_tap                 :1;
 	u8 reserve0 		      :5;
 };
 
@@ -529,21 +527,8 @@ struct report_info_block {
 	u8 nReserved00		:3;
 	u8 nReportResolutionMode:3;
 	u8 nCustomerType	:5;
-	u8 nDemoPacketID	:8;
-	u8 nDemoFingerType	:3;
-	u8 nDemoCustomerType:3;
-	u8 nDemoPenType		:2;
-};
-
-struct ili_debug_info{//Glove Hopping Charge NoiseWarning Rebase Bending GndUnstable Palm
-	u8 nGlove		    : 1;
-	u8 nHopping		    : 1;
-	u8 nCharge		    : 1;
-	u8 nNoiseWarning	: 1;
-	u8 nRebase		    : 1;
-	u8 nBending		    : 1;
-	u8 nGndUnstable  	: 1;
-	u8 nPalm			: 1;
+	u8 nReserved02		:8;
+	u8 nReserved03		:8;
 };
 
 
@@ -855,7 +840,6 @@ struct ilitek_pen_info {
 
 /* The example for the gesture virtual keys */
 #define GESTURE_DOUBLECLICK				0x58
-#define GESTURE_SINGLECLICK				0x57
 #define GESTURE_UP						0x60
 #define GESTURE_DOWN					0x61
 #define GESTURE_LEFT					0x62
@@ -868,7 +852,7 @@ struct ilitek_pen_info {
 #define GESTURE_O						0x69
 #define GESTURE_S						0x6A
 #define GESTURE_Z						0x6B
-#define KEY_GESTURE_POWER				KEY_WAKEUP
+#define KEY_GESTURE_POWER				KEY_POWER
 #define KEY_GESTURE_UP					KEY_UP
 #define KEY_GESTURE_DOWN				KEY_DOWN
 #define KEY_GESTURE_LEFT				KEY_LEFT
@@ -919,7 +903,6 @@ struct ilitek_pen_info {
 #define ALPHABET_TWO_LINE_2_BOTTOM			(ON)/* BIT16 */
 #define ALPHABET_F					(ON)/* BIT17 */
 #define ALPHABET_AT					(ON)/* BIT18 */
-#define SINGLE_TAP                                   	(ON)/* BIT19 */
 
 /* FW data format */
 #define DATA_FORMAT_DEMO_CMD							0x00
@@ -1029,7 +1012,6 @@ struct ilitek_pen_info {
 #define P5_X_FW_SIGNAL_DATA_MODE			0x03
 #define P5_X_FW_RAW_DATA_MODE				0x08
 #define P5_X_DEMO_PACKET_ID					0x5A
-#define P5_X_DEBUG_INFO_PACKET_ID           0xBB
 #define P5_X_DEMO_AXIS_PACKET_ID			0x5B
 #define P5_X_DEBUG_PACKET_ID				0xA7
 #define P5_X_DEBUG_AXIS_PACKET_ID			0xA8
@@ -1115,11 +1097,6 @@ struct ilitek_pen_info {
 
 #define SRAM_TEST_GROUP_LEN     			16
 #define SRAM_TEST_GROUP_STR_LEN 			64
-
-enum touch_state {
-	TOUCH_DEEP_SLEEP_STATE = 0,
-	TOUCH_LOW_POWER_STATE,
-};
 
 struct sram_test_para {
 	/* ini param */
@@ -1220,15 +1197,7 @@ struct ilitek_ts_data {
 	int irq_tirgger_type;
 	int tp_rst;
 	int tp_int;
-	int irq_use_eic;
 	int wait_int_timeout;
-	u32 irq_use_eic_flags;
-	struct pinctrl* pinctrl;
-	struct pinctrl_state* pins_extconf0;
-	struct pinctrl_state* pins_extconf1;
-	int irq_eic;
-	spinlock_t irq_lock;
-	bool irq_disabled;
 
 
 
@@ -1281,7 +1250,6 @@ struct ilitek_ts_data {
 	int gesture_demo_ctrl;
 	struct gesture_symbol ges_sym;
 	struct report_info_block rib;
-	struct ili_debug_info di;
 
 	char* flashName;
 	u16 flash_mid;
@@ -1363,7 +1331,6 @@ struct ilitek_ts_data {
 	atomic_t ignore_report;
 	atomic_t stop_sync_stat;
 
-	u8 sys_gesture_type; //0x01 GESTURE_SINGLECLICK  0x02 GESTURE_DOUBLECLICK
 
 	/* Event for driver test */
 	struct completion esd_done;
@@ -1405,7 +1372,6 @@ struct ilitek_dma_config {
 	u32 dest_addr;
 	u32 dest_fmt;
 	u32 block_size;
-	u32 dmaControlSwitch;
 };
 
 struct gesture_coordinate {
@@ -1506,7 +1472,6 @@ extern int ili_fw_upgrade(int op);
 extern int ili_mp_test_main(char *apk, bool lcm_on);
 
 /* debug info for moto */
-extern void ili_report_touch_debug_info(u8 *buf);
 
 /* Prototypes for tddi core functions */
 extern int ili_touch_esd_gesture_flash(void);
@@ -1555,7 +1520,7 @@ extern int ili_ic_get_protocl_ver(void);
 extern int ili_ic_get_fw_ver(void);
 extern int ili_ic_get_info(void);
 extern int ili_ic_get_all_info(void);
-extern void ili_ic_get_report_info(void);
+extern void ili_ic_get_compress_info(void);
 extern int ili_set_bypass_mode(bool mcu);
 extern int ili_cascade_ic_get_info(bool enter_ice, bool exit_ice);
 extern void ili_mspi_set_slave_to_qual_mode(void);
@@ -1631,10 +1596,6 @@ extern void ili_tp_reset(void);
 extern void ili_irq_unregister(void);
 extern int ili_irq_register(int type);
 extern void ilitek_plat_charger_init(void);
-extern void ili_eic_irq_disable(void);
-extern void ili_eic_irq_enable(void);
-extern int ili_pinctrl_select_irq_eic(struct ilitek_ts_data  *ts);
-extern int ili_pinctrl_select_irq_gpio(struct ilitek_ts_data  *ts);
 
 #if SUSPEND_RESUME_SUPPORT
 #if QCOM_PANEL_SUSPEND_RESUME | (defined(__DRM_PANEL_H__) && defined(DRM_PANEL_EARLY_EVENT_BLANK))
@@ -1664,7 +1625,6 @@ extern int ili_ice_mode_ctrl_by_mode_spi(bool enable, bool mcu, int mode);
 extern int ili_ice_mode_ctrl_by_mode_i2c(bool enable, bool mcu, int mode);
 extern void ili_spi_ice_mode_read(u32 addr, u32 *data, int len, u8 msmode);
 extern int ili_ice_slave_write_register(u32 addr, u32 data, int len);
-extern void touch_set_state(int state);
 
 static inline void ipio_kfree(void **mem)
 {
