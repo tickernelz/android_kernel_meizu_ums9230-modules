@@ -14,6 +14,7 @@
 KO_MODULE_NAME := unisoc_gnss_pmnotify_ctl
 KO_MODULE_OUT := $(BSP_MODULES_OUT)/$(KO_MODULE_NAME)
 export KBUILD_EXTRA_SYMBOLS += $(BSP_MODULES_OUT)/unisoc_wcn_bsp/Module.symvers
+export KBUILD_EXTRA_SYMBOLS += $(BSP_MODULES_OUT)/unisoc_gnss_common_ctl_all/Module.symvers
 KO_MODULE_KBUILD := $(CURDIR)/Kbuild
 
 .PHONY: modules modules_install clean
