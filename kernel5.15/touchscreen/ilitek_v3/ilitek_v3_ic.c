@@ -402,7 +402,7 @@ out:
 	return ret;
 }
 
-int ili_tddi_ic_sram_test()
+int ili_tddi_ic_sram_test(void)
 {
 	int ret = 0;
 
@@ -1442,14 +1442,62 @@ void ili_ic_send_edge_palm_para(void)
 
 int ili_ic_func_ctrl_export(const char *name, int ctrl)
 {
-	int ret;
+	int i = 0, ret;
 	if (ERR_ALLOC_MEM(ilits)) {
 		ILI_ERR("Failed to allocate ts memory, ilits is NULL.\n");
 		return -ENOMEM;
 	}
 
 	mutex_lock(&ilits->touch_mutex);
-	ret = ili_ic_func_ctrl(name, ctrl);
+	for (i = 0; i < FUNC_CTRL_NUM; i++) {
+		if (ipio_strcmp(name, func_ctrl[i].name) == 0) {
+			if (strlen(name) != strlen(func_ctrl[i].name))
+				continue;
+			break;
+		}
+	}
+
+	if (i >= FUNC_CTRL_NUM) {
+		ILI_ERR("Not found function ctrl, %s\n", name);
+		ret = -1;
+		goto out;
+	}
+
+	if (ilits->protocol->ver == PROTOCOL_VER_500) {
+		ILI_ERR("Non support function ctrl with protocol v5.0\n");
+		ret = -1;
+		goto out;
+	}
+
+	if (ilits->protocol->ver >= PROTOCOL_VER_560) {
+		if (ipio_strcmp(func_ctrl[i].name, "gesture") == 0 ||
+			ipio_strcmp(func_ctrl[i].name, "phone_cover_window") == 0) {
+			ILI_INFO("Non support %s function ctrl\n", func_ctrl[i].name);
+			ret = -1;
+			goto out;
+		}
+	}
+
+	func_ctrl[i].cmd[2] = ctrl;
+
+	ILI_INFO("func = %s, len = %d, cmd = 0x%x, 0%x, 0x%x\n", func_ctrl[i].name, func_ctrl[i].len,
+		func_ctrl[i].cmd[0], func_ctrl[i].cmd[1], func_ctrl[i].cmd[2]);
+
+	ret = ilits->wrapper(func_ctrl[i].cmd, func_ctrl[i].len, NULL, 0, OFF, OFF);
+	if (ret < 0)
+		ILI_ERR("Write TP function failed\n");
+
+	if (func_ctrl[i].rec_state < 2) {
+		if (ctrl == func_ctrl[i].def_cmd)
+			func_ctrl[i].rec_state = DISABLE;
+		else
+			func_ctrl[i].rec_state = ENABLE;
+
+		func_ctrl[i].rec_cmd = ctrl;
+	}
+
+	ILI_DBG("record %s func cmd %d, rec_state %d\n", func_ctrl[i].name, func_ctrl[i].rec_cmd, func_ctrl[i].rec_state);
+out:
 	mutex_unlock(&ilits->touch_mutex);
 	return ret;
 }
@@ -1574,15 +1622,6 @@ void ili_get_dma1_config(struct ilitek_dma_config *dma)
 		ILI_ERR("read block size (%d) failed\n", dma->block_size);
 	ILI_DBG("dma.src_addr=0x%x, dma.src_fmt=0x%x, dma.dest_addr=0x%x, dma.dest_fmt=0x%x, dma.block_size=0x%x\n"
 		, dma->src_addr, dma->src_fmt, dma->dest_addr, dma->dest_fmt, dma->block_size);
-	/* DMA Control Switch */
-	if (ilits->chip->id == ILI9882_CHIP && ilits->chip->type == ILI_V) {
-		if (ili_ice_mode_read(0x0722B8, &dma->dmaControlSwitch, 1) < 0)
-			ILI_ERR("read dma control switch (%d) failed\n", dma->dmaControlSwitch);
-		ILI_DBG("dma.dma_control_switch=0x%x\n", dma->dmaControlSwitch);
-		if (ili_ice_mode_write(0x0722B8, dma->dmaControlSwitch & 0xFD, 1) < 0)
-			ILI_ERR("Write dma control switch (%d) failed\n", dma->dmaControlSwitch & 0xFD);
-		ILI_DBG("dma.dma_control_switch=0x%x\n", dma->dmaControlSwitch & 0xFD);
-	}
 }
 
 void ili_set_dma1_config(struct ilitek_dma_config *dma)
@@ -1616,12 +1655,6 @@ void ili_set_dma1_config(struct ilitek_dma_config *dma)
 	/* Dma1 start */
 	if (ili_ice_mode_write(0x072100, 0x01040000, 4) < 0)
 		ILI_ERR("Write dma1 start failed\n");
-	/* DMA Control Switch */
-	if (ilits->chip->id == ILI9882_CHIP && ilits->chip->type == ILI_V) {
-		if (ili_ice_mode_write(0x0722B8, dma->dmaControlSwitch, 1) < 0)
-			ILI_ERR("Write dma control switch (%d) failed\n", dma->dmaControlSwitch);
-		ILI_DBG("dma.dma_control_switch=0x%x\n", dma->dmaControlSwitch);
-	}
 }
 
 int ili_ic_whole_reset(bool mcu, bool withflash)
@@ -2446,9 +2479,12 @@ int ili_ic_get_panel_info(void)
 			ILI_ERR("Read panel info error\n");
 
 		if (buf[0] != cmd) {
-			ILI_INFO("Invalid panel info, use default resolution\n");
-			ilits->panel_wid = TOUCH_SCREEN_X_MAX;
-			ilits->panel_hei = TOUCH_SCREEN_Y_MAX;
+			unsigned short width = 0, height = 0;
+			int tp_size = revo_get_tp_size(&width, &height);
+
+			ILI_INFO("Invalid panel info, use default resolution ret:%d\n", tp_size);
+			ilits->panel_wid = width;
+			ilits->panel_hei = height;
 			ilits->trans_xy = OFF;
 		} else {
 			ILI_INFO("Get panel info successfully, retry %d times\n", retry);
@@ -2643,48 +2679,39 @@ out:
 	return ret;
 }
 
-void ili_ic_get_report_info(void)
+void ili_ic_get_compress_info(void)
 {
-	int ret = 0, retry = 0;
-	u8 cmd = P5_X_GET_REPORT_INFORMATION;
+#if ENABLE_COMPRESS_MODE
+	int ret = 0;
+	u8 cmd = P5_X_GET_COMPRESS_INFORMATION;
 	u8 buf[10] = {0};
 
 	if (ilits->info_from_hex  && (ilits->chip->core_ver >= CORE_VER_1700)) {
 		buf[1] = ilits->fw_info[0];
-		buf[3] = ilits->fw_info[2];
-		buf[4] = ilits->fw_info[3];
 		goto out;
 	}
 
-	do {
-		cmd = P5_X_GET_REPORT_INFORMATION;
-		ret = ilits->wrapper(&cmd, sizeof(cmd), buf, 5, ON, OFF);
-		if (ret < 0)
-			ILI_ERR("Read report info error\n");
+	ret = ilits->wrapper(&cmd, sizeof(cmd), buf, 5, ON, OFF);
+	if (ret < 0)
+		ILI_ERR("Read compress info error\n");
 
-		if (buf[0] != cmd) {
-			ILI_INFO("Invalid report info, use default value\n");
-			buf[1] = 0xFF; /*set compress disable*/
-			buf[3] = 0xFF;
-			buf[4] = 0xFF;
-		} else {
-			ILI_INFO("Get report info successfully, retry %d times\n", retry);
-			break;
-		}
-	} while(++retry < 3);
+	if (buf[0] != cmd) {
+		ILI_INFO("Invalid compress info, use default value\n");
+		ilits->compress_disable = true;
+		ilits->compress_handonly_disable = true;
+		ilits->compress_penonly_disable = true;
+	} else {
+		ilits->compress_disable = (buf[1] & 0x20) >> 5;
+		ilits->compress_handonly_disable = (buf[1] & 0x40) >> 6;
+		ilits->compress_penonly_disable = (buf[1] & 0x80) >> 7;
+	}
 
 out:
-#if ENABLE_COMPRESS_MODE
 	ilits->compress_disable = (buf[1] & 0x20) >> 5;
 	ilits->compress_handonly_disable = (buf[1] & 0x40) >> 6;
 	ilits->compress_penonly_disable = (buf[1] & 0x80) >> 7;
 	ILI_INFO("compress_disable = %d, compress_handonly_disable = %d, compress_penonly_disable = %d\n", ilits->compress_disable, ilits->compress_handonly_disable, ilits->compress_penonly_disable);
 #endif
-	ilits->rib.nDemoPacketID = buf[3];
-	ilits->rib.nDemoFingerType = buf[4] & 0x07;
-	ilits->rib.nDemoCustomerType = (buf[4] >> 3) & 0x07;
-	ilits->rib.nDemoPenType = (buf[4] >> 6) & 0x03;
-	ILI_INFO("Report Info : nDemoPacketID = %x,  nDemoFingerType = %x, nDemoCustomerType = %x, nDemoPenType = %x\n", ilits->rib.nDemoPacketID, ilits->rib.nDemoFingerType, ilits->rib.nDemoCustomerType, ilits->rib.nDemoPenType);
 }
 
 
@@ -2692,11 +2719,6 @@ out:
 int ili_ic_get_all_info(void)
 {
 	int ret = 0;
-
-	ili_ic_get_protocl_ver();
-	if (ilits->info_from_hex)
-		goto out;
-
 #if (TDDI_INTERFACE == BUS_I2C && ENABLE_GET_ALL_INFO)
 	u8 cmd = P5_X_GET_ALL_INFORMATION;
 	u8 buf[100] = {0};
@@ -2742,7 +2764,7 @@ int ili_ic_get_all_info(void)
 		}
 
 		/* GET_COMPRESS_INFORMATION */
-		cmd = P5_X_GET_REPORT_INFORMATION;
+		cmd = P5_X_GET_COMPRESS_INFORMATION;
 		if (buf[52] != cmd) {
 			ILI_INFO("Invalid compress & report format info, use default report format resolution\n");
 			ilits->compress_disable = true;
@@ -2756,10 +2778,6 @@ int ili_ic_get_all_info(void)
 			} else {
 				ilits->customertype_off = POSITION_CUSTOMER_TYPE_OFF;
 			}
-			ilits->rib.nDemoPacketID = 0xFF;
-			ilits->rib.nDemoFingerType = 0xFF & 0x07;
-			ilits->rib.nDemoCustomerType = (0xFF >> 3) & 0x07;
-			ilits->rib.nDemoPenType = (0xFF >> 6) & 0x03;
 		} else {
 			/* GET_COMPRESS_INFORMATION(0x2B) */
 			ilits->compress_disable = (buf[53] & 0x20) >> 5;
@@ -2773,16 +2791,13 @@ int ili_ic_get_all_info(void)
 			ilits->PenType = buf[54] >> 6;
 			ilits->customertype_off = POSITION_CUSTOMER_TYPE_OFF_3BITS;
 
-			ilits->rib.nDemoPacketID = buf[55];
-			ilits->rib.nDemoFingerType = buf[56] & 0x07;
-			ilits->rib.nDemoCustomerType = (buf[56] >> 3) & 0x07;
-			ilits->rib.nDemoPenType = (buf[56] >> 6) & 0x03;
-			
 			if (ilits->PenType == POSITION_PEN_TYPE_ON) {
 				ilits->touch_num = MAX_TOUCH_NUM + MAX_PEN_NUM;
 				ili_set_tp_data_len(DATA_FORMAT_DEMO, false, NULL);
 				ILI_INFO("Panel support Pen Mode, Packet Len = %d, Touch Number = %d\n", ilits->tp_data_len, ilits->touch_num);
 			}
+
+			/* reserved : buf[55] ~ buf[56] = 0xFF */
 		}
 
 #if ENABLE_PEN_MODE
@@ -2794,13 +2809,11 @@ int ili_ic_get_all_info(void)
 			ilits->pen_info_block.nPyRaw = P5_X_PEN_INFO_Y_DATA_LEN;
 			ilits->pen_info_block.nPxVa = 1;
 			ilits->pen_info_block.nPyVa = 1;
-			ilits->pen_info_block.nPenX_MP = 0;
 		} else {
 			ilits->pen_info_block.nPxRaw = buf[58];
 			ilits->pen_info_block.nPyRaw = buf[59];
 			ilits->pen_info_block.nPxVa = buf[60];
 			ilits->pen_info_block.nPyVa = buf[61];
-			ilits->pen_info_block.nPenX_MP = buf[62];
 		}
 		/* reserved : buf[62] ~ buf[65] = 0xFF */
 #endif
@@ -2830,22 +2843,27 @@ int ili_ic_get_all_info(void)
 		ILI_INFO("Core version = %d.%d.%d.%d\n", buf[25], buf[26], buf[27], buf[28]);
 		ILI_INFO("TP Info: min_x = %d, min_y = %d, max_x = %d, max_y = %d\n", ilits->min_x, ilits->min_y, ilits->max_x, ilits->max_y);
 		ILI_INFO("TP Info: xch = %d, ych = %d, stx = %d, srx = %d\n", ilits->xch_num, ilits->ych_num, ilits->stx, ilits->srx);
-		ILI_INFO("Report Info : nDemoPacketID = %x,  nDemoFingerType = %x, nDemoCustomerType = %x, nDemoPenType = %x\n", ilits->rib.nDemoPacketID, ilits->rib.nDemoFingerType, ilits->rib.nDemoCustomerType, ilits->rib.nDemoPenType);
 		ILI_INFO("Compress Info : compress_disable = %d, compress_handonly_disable = %d, compress_penonly_disable = %d\n",ilits->compress_disable, ilits->compress_handonly_disable, ilits->compress_penonly_disable);
-		ILI_INFO("Pen Len Info : PxRaw = %d, PyRaw = %d, PxVa = %d, PyVa = %d, nPenX_MP = %d\n", ilits->pen_info_block.nPxRaw, ilits->pen_info_block.nPyRaw, ilits->pen_info_block.nPxVa, ilits->pen_info_block.nPyVa, ilits->pen_info_block.nPenX_MP);
+		ILI_INFO("Pen Len Info : PxRaw = %d, PyRaw = %d, PxVa = %d, PyVa = %d\n", ilits->pen_info_block.nPxRaw, ilits->pen_info_block.nPyRaw, ilits->pen_info_block.nPxVa, ilits->pen_info_block.nPyVa);
 		ILI_INFO("CASCADE Info : cascade_info_block.nDisable = %d, cascade_info_block.nNum = %d\n", ilits->cascade_info_block.nDisable, ilits->cascade_info_block.nNum);
 		ILI_INFO("Panel info: width = %d, height = %d\n", ilits->panel_wid, ilits->panel_hei);
 		ILI_INFO("Transfer touch coordinate = %s, Customer Type = %X, Report Resolution Format Mode = %X\n", ilits->trans_xy ? "ON" : "OFF", ilits->rib.nCustomerType, ilits->rib.nReportResolutionMode);
-		return ret;
+	} else {
+		ili_ic_get_core_ver();
+		ili_ic_get_protocl_ver();
+		ili_ic_get_fw_ver();
+		ili_ic_get_tp_info();
+		ili_ic_get_panel_info();
+		ili_ic_get_compress_info();
 	}
-#endif
-
-out:
+#else
 	ili_ic_get_core_ver();
+	ili_ic_get_protocl_ver();
 	ili_ic_get_fw_ver();
 	ili_ic_get_tp_info();
 	ili_ic_get_panel_info();
-	ili_ic_get_report_info();
+	ili_ic_get_compress_info();
+#endif
 
 	return ret;
 }

@@ -936,7 +936,7 @@ int ilitek_tddi_mp_ini_parser(const char *path)
 
 	ILI_INFO("ini file path = %s\n", path);
 
-	f = filp_open(path, O_RDONLY, 644);
+	f = revo_filp_open(path, O_RDONLY, 644);
 	if (ERR_ALLOC_MEM(f)) {
 		ILI_ERR("Failed to open ini file at %ld, try to request_firmware\n", PTR_ERR(f));
 		f = NULL;
@@ -989,7 +989,7 @@ int ilitek_tddi_mp_ini_parser(const char *path)
 		vfs_read(f, tmp, fsize, &pos);
 		set_fs(old_fs);
 #else
-		kernel_read(f, tmp, fsize, &pos);
+		revo_kernel_read(f, tmp, fsize, &pos);
 #endif
 		tmp[fsize] = 0x0;
 	} else {
@@ -4093,7 +4093,7 @@ static int mp_show_result(bool lcm_on)
 #else
 	ILI_INFO("Open CSV : %s\n", csv_name);
 	if (f == NULL)
-		f = filp_open(csv_name, O_WRONLY | O_CREAT | O_TRUNC, 644);
+		f = revo_filp_open(csv_name, O_WRONLY | O_CREAT | O_TRUNC, 644);
 
 	if (ERR_ALLOC_MEM(f)) {
 		ILI_ERR("Failed to open CSV file");
@@ -4116,7 +4116,7 @@ static int mp_show_result(bool lcm_on)
 	vfs_write(f, csv, csv_len, &pos);
 	set_fs(fs);
 #else
-	kernel_write(f, csv, csv_len, &pos);
+	revo_kernel_write(f, csv, csv_len, &pos);
 #endif
 	filp_close(f, NULL);
 

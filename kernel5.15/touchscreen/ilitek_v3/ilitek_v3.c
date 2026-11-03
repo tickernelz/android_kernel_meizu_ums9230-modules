@@ -105,11 +105,8 @@ static void ilitek_resume_by_ddi_work(struct work_struct *work)
 {
 	mutex_lock(&ilits->touch_mutex);
 
-	if (ilits->gesture){
-		disable_irq_wake(ilits->irq_eic);
-		ili_eic_irq_disable();
-		ili_pinctrl_select_irq_gpio(ilits);
-	}
+	if (ilits->gesture)
+		disable_irq_wake(ilits->irq_num);
 	/* Set tp as demo mode and reload code if it's iram. */
 	ilits->actual_tp_mode = P5_X_FW_AP_MODE;
 	if (ilits->fw_upgrade_mode == UPGRADE_IRAM) {
@@ -178,9 +175,8 @@ void ili_resume_by_ddi(void)
 #endif
 	queue_work(resume_by_ddi_wq, &(resume_by_ddi_work));
 	} else {
-		if (ilits->gesture){
-			disable_irq_wake(ilits->irq_eic);
-		}
+		if (ilits->gesture)
+			disable_irq_wake(ilits->irq_num);
 		ilits->actual_tp_mode = P5_X_FW_AP_MODE;
 
 	if (ilits->cascade_info_block.nNum != 0) {
@@ -458,7 +454,7 @@ static int read_power_status(u8 *buf)
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
 
-	f = filp_open(POWER_STATUS_PATH, O_RDONLY, 0);
+	f = revo_filp_open(POWER_STATUS_PATH, O_RDONLY, 0);
 	if (ERR_ALLOC_MEM(f)) {
 		ILI_ERR("Failed to open %s\n", POWER_STATUS_PATH);
 		return -1;
@@ -613,10 +609,8 @@ int ili_sleep_handler(int mode)
 
 		if ((ilits->gesture) || (ilits->prox_face_mode == PROXIMITY_SUSPEND_RESUME)) {
 			ili_switch_tp_mode(P5_X_FW_GESTURE_MODE);
-			enable_irq_wake(ilits->irq_eic);
-			ili_irq_disable();
-			ili_eic_irq_enable();
-			ili_pinctrl_select_irq_eic(ilits);
+			enable_irq_wake(ilits->irq_num);
+			ili_irq_enable();
 		} else {
 			if (ili_ic_func_ctrl("sleep", SLEEP_IN) < 0)
 				ILI_ERR("Write sleep in cmd failed\n");
@@ -637,10 +631,8 @@ int ili_sleep_handler(int mode)
 
 		if ((ilits->gesture) || (ilits->prox_face_mode == PROXIMITY_SUSPEND_RESUME)) {
 			ili_switch_tp_mode(P5_X_FW_GESTURE_MODE);
-			enable_irq_wake(ilits->irq_eic);
-			ili_irq_disable();
-			ili_eic_irq_enable();
-			ili_pinctrl_select_irq_eic(ilits);
+			enable_irq_wake(ilits->irq_num);
+			ili_irq_enable();
 		} else {
 			if (ili_ic_func_ctrl("sleep", DEEP_SLEEP_IN) < 0)
 				ILI_ERR("Write deep sleep in cmd failed\n");
@@ -652,9 +644,8 @@ int ili_sleep_handler(int mode)
 		ILI_INFO("TP resume start\n");
 		ilits->tp_suspend = false;
 		ilits->report = ENABLE;
-		if (ilits->gesture){
-			disable_irq_wake(ilits->irq_eic);
-		}
+		if (ilits->gesture)
+			disable_irq_wake(ilits->irq_num);
 		/* Set tp as demo mode and reload code if it's iram. */
 		ilits->actual_tp_mode = P5_X_FW_AP_MODE;
 		if (ilits->fw_upgrade_mode == UPGRADE_IRAM) {
@@ -688,8 +679,6 @@ int ili_sleep_handler(int mode)
 		ili_wq_ctrl(WQ_ESD, ENABLE);
 		ili_wq_ctrl(WQ_BAT, ENABLE);
 		ili_irq_enable();
-		ili_eic_irq_disable();
-		ili_pinctrl_select_irq_gpio(ilits);
 		break;
 	default:
 		ILI_ERR("Unknown sleep mode, %d\n", mode);
@@ -737,10 +726,8 @@ int ili_fw_upgrade_handler(void *data)
 		ILI_INFO("Registre touch to input subsystem\n");
 		ili_input_register();
 
-		if (ilits->PenType == POSITION_PEN_TYPE_ON) {
-			ILI_INFO("Registre stylus to input subsystem\n");
+		if (ilits->PenType == POSITION_PEN_TYPE_ON)
 			ili_input_pen_register();
-		}
 		ili_wq_ctrl(WQ_ESD, ENABLE);
 		ili_wq_ctrl(WQ_BAT, ENABLE);
 	}
@@ -784,47 +771,13 @@ int ili_set_tp_data_len(int format, bool send, u8 *data)
 
 	switch (format) {
 	case DATA_FORMAT_DEMO:
-		/* no support new demo info case */
-		if (ilits->rib.nDemoPacketID == 0xFF && ilits->rib.nDemoFingerType == 0x7 &&
-			ilits->rib.nDemoCustomerType == 0x7 && ilits->rib.nDemoPenType == 0x3 ) {
-			if (ilits->PenType == POSITION_PEN_TYPE_ON) {
-				ilits->touch_num = MAX_TOUCH_NUM + MAX_PEN_NUM;
-				ilits->pen_info.report_type = P5_X_HAND_PEN_TYPE;
-				ilits->pen_info.pen_data_mode = HAND_PEN_DEMO_MODE;
-				len = demo_mode_packet_len + P5_X_PEN_DATA_LEN;
-			} else {
-				len = demo_mode_packet_len;
-			}
+		if (ilits->PenType == POSITION_PEN_TYPE_ON) {
+			ilits->touch_num = MAX_TOUCH_NUM + MAX_PEN_NUM;
+			ilits->pen_info.report_type = P5_X_HAND_PEN_TYPE;
+			ilits->pen_info.pen_data_mode = HAND_PEN_DEMO_MODE;
+			len = demo_mode_packet_len + P5_X_PEN_DATA_LEN;
 		} else {
-			switch (ilits->rib.nDemoPacketID) {
-			case P5_X_DEMO_FINGER_PACKET_ID:
-				if (ilits->rib.nDemoFingerType == 0x03 && ilits->rib.nDemoPenType == 0x1) {
-					len = P5_X_DEMO_81_LENGTH_SIMPLE;
-				} else if (ilits->rib.nDemoFingerType == 0x05 && ilits->rib.nDemoPenType == 0x0) {
-					len = P5_X_DEMO_81_LENGTH_ABUNDANT;
-				} else {
-					ILI_ERR("Unknow TP data format\n");
-					return -1;
-				}
-				ilits->touch_num = MAX_TOUCH_NUM + MAX_PEN_NUM;
-				ilits->pen_info.report_type = P5_X_HAND_PEN_TYPE;
-				ilits->pen_info.pen_data_mode = HAND_PEN_DEMO_MODE;
-				break;
-			case P5_X_DEMO_PACKET_ID:
-			case P5_X_DEMO_HIGH_RESOLUTION_PACKET_ID:
-				if (ilits->PenType == POSITION_PEN_TYPE_ON) {
-					ilits->touch_num = MAX_TOUCH_NUM + MAX_PEN_NUM;
-					ilits->pen_info.report_type = P5_X_HAND_PEN_TYPE;
-					ilits->pen_info.pen_data_mode = HAND_PEN_DEMO_MODE;
-					len = demo_mode_packet_len + P5_X_PEN_DATA_LEN;
-				} else {
-					len = demo_mode_packet_len;
-				}
-				break;
-			default:
-				ILI_ERR("Unknow TP data format\n");
-				return -1;
-			}
+			len = demo_mode_packet_len;
 		}
 		ctrl = DATA_FORMAT_DEMO_CMD;
 		break;
@@ -1226,10 +1179,6 @@ int ili_report_handler(void)
 	trdata = ilits->tr_buf;
 	pid = trdata[0];
 	ILI_DBG("Packet ID = %x\n", pid);
-	if(pid == P5_X_DEBUG_INFO_PACKET_ID){
-		ili_report_touch_debug_info(trdata);
-		goto out;
-	}
 	if (checksum != pack_checksum && pid != P5_X_I2CUART_PACKET_ID) {
 		ILI_ERR("Checksum Error (0x%X)! Pack = 0x%X, len = %d\n", checksum, pack_checksum, rlen);
 		debug_en = DEBUG_ALL;
@@ -1499,8 +1448,6 @@ static void ili_update_tp_module_info(void)
 		ilits->md_fw_rq_path = DEF_FW_REQUEST_PATH;
 		ilits->md_ini_path = DEF_INI_NAME_PATH;
 		ilits->md_ini_rq_path = DEF_INI_REQUEST_PATH;
-		ilits->md_fw_ili = CTPM_FW_DEF;
-		ilits->md_fw_ili_size = sizeof(CTPM_FW_DEF);
 	}
 
 	ILI_INFO("Found %s module: ini path = %s, fw path = (%s, %s, %d)\n",
@@ -1528,7 +1475,6 @@ int ili_tddi_init(void)
 	mutex_init(&ilits->debug_read_mutex);
 	init_waitqueue_head(&(ilits->inq));
 	spin_lock_init(&ilits->irq_spin);
-	spin_lock_init(&ilits->irq_lock);
 	init_completion(&ilits->esd_done);
 
 	atomic_set(&ilits->ice_stat, DISABLE);
@@ -1663,6 +1609,7 @@ void ili_dev_remove(bool flag)
 
 	kfree(ilits->tr_buf);
 	kfree(ilits->gcoord);
+	vfree(ilits->md_fw_ili);
 
 	ili_interface_dev_exit(ilits, flag);
 }
