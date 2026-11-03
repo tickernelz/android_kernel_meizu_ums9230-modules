@@ -207,13 +207,13 @@ typedef struct _key_map {
 } nav_keymap_t;
 
 static nav_keymap_t keymap[] = {
-    { NAV_KEY_UP,       KEY_F11,         }, /* KEY_RESERVED, ignore this key */
-    { NAV_KEY_DOWN,     KEY_F12,       },
-    { NAV_KEY_RIGHT,    KEY_RIGHT,      },
-    { NAV_KEY_LEFT,     KEY_LEFT,       },
-    { NAV_KEY_CLICK,    KEY_CAMERA,   },
-    { NAV_KEY_DCLICK,   KEY_F10,   },
-    { NAV_KEY_LONGPRESS,KEY_HOMEPAGE,   },
+    { NAV_KEY_UP,       KEY_RESERVED,   }, /* KEY_RESERVED, ignore this key */
+    { NAV_KEY_DOWN,     KEY_RESERVED,   },
+    { NAV_KEY_RIGHT,    KEY_RESERVED,   },
+    { NAV_KEY_LEFT,     KEY_RESERVED,   },
+    { NAV_KEY_CLICK,    KEY_RESERVED,   },
+    { NAV_KEY_DCLICK,   KEY_RESERVED,   },
+    { NAV_KEY_LONGPRESS,KEY_RESERVED,   },
 };
 
 static LIST_HEAD(device_list);
@@ -247,7 +247,7 @@ static int silfp_set_feature(struct silfp_data *fp_dev, u8 feature);
 #ifndef BSP_SIL_DYNAMIC_SPI
 static
 #endif
-fp_debug_level_t sil_debug_level = INFO_LOG;
+fp_debug_level_t sil_debug_level = ALL_LOG;
 
 #include PLAT_H
 
@@ -947,7 +947,6 @@ static int silfp_resource_deinit(struct silfp_data *fp_dev)
                 free_irq(fp_dev->irq, fp_dev);
             }
 
-#if 0
             gpio_direction_input(fp_dev->int_port);
 #if !defined(BSP_SIL_PLAT_MTK)
             gpio_free(fp_dev->int_port);
@@ -955,8 +954,6 @@ static int silfp_resource_deinit(struct silfp_data *fp_dev)
                 gpio_free(fp_dev->rst_port);
             }
 #endif /* !BSP_SIL_PLAT_MTK */
-#endif
-            silfp_pwdn(fp_dev, SIFP_PWDN_POWEROFF);
             fp_dev->irq_no_use = 0;
             fp_dev->int_port = -1;
             fp_dev->rst_port = -1;

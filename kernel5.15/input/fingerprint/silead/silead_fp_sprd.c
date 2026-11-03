@@ -162,7 +162,7 @@ static void silfp_hw_reset(struct silfp_data *fp_dev, u8 delay)
             gpio_direction_output(fp_dev->int_port, 0);
         }
 
-        mdelay((delay?delay:3)*RESET_TIME_MULTIPLE);
+        mdelay((delay?delay:10)*RESET_TIME_MULTIPLE);
     }
 }
 
@@ -300,54 +300,16 @@ static int silfp_resource_init(struct silfp_data *fp_dev, struct fp_dev_init_t *
     fp_dev->int_port = -1;
     fp_dev->rst_port = -1;
     silfp_parse_dts(fp_dev);
-
-#ifdef BSP_SIL_POWER_SUPPLY_GPIO
-    fp_dev->avdd_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "avdd-gpios", 0);
-    fp_dev->vddio_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "vddio-gpios", 0);
-    if (fp_dev->avdd_port >= 0 ) {
-        gpio_free(fp_dev->avdd_port);
-        ret = gpio_request(fp_dev->avdd_port, "SILFP_AVDD_PIN");
-        if (ret < 0) {
-            LOG_MSG_DEBUG(ERR_LOG, "[%s] Failed to request GPIO=%d, ret=%d",__func__,(s32)fp_dev->avdd_port, ret);
-            status = -ENODEV;
-            goto err_avdd;
-        }
-    }
-
-    if (fp_dev->vddio_port >= 0 ) {
-        gpio_free(fp_dev->vddio_port);
-        ret = gpio_request(fp_dev->vddio_port, "SILFP_VDDIO_PIN");
-        if (ret < 0) {
-            LOG_MSG_DEBUG(ERR_LOG, "[%s] Failed to request GPIO=%d, ret=%d",__func__,(s32)fp_dev->vddio_port, ret);
-            status = -ENODEV;
-            goto err_vddio;
-        }
-    }
-#endif /* BSP_SIL_POWER_SUPPLY_GPIO */
-    fp_dev->rst_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "rst-gpios", 0);
-    if (fp_dev->rst_port >= 0 ) {
-        gpio_free(fp_dev->rst_port);
-    }
-
-    if (fp_dev->rst_port >= 0 ) {
-        ret = gpio_request(fp_dev->rst_port, "SILFP_RST_PIN");
-        if (ret < 0) {
-            LOG_MSG_DEBUG(ERR_LOG, "[%s] Failed to request GPIO=%d, ret=%d",__func__,(s32)fp_dev->rst_port, ret);
-            status = -ENODEV;
-            goto err_rst;
-        } else {
-            gpio_direction_output(fp_dev->rst_port, 0);
-            msleep(50);
-        }
-    }
-
     silfp_hw_poweron(fp_dev);
-    msleep(10);
 
     fp_dev->int_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "irq-gpios", 0);
+    fp_dev->rst_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "rst-gpios", 0);
     LOG_MSG_DEBUG(INFO_LOG, "[%s] int_port %d, rst_port %d.\n",__func__,fp_dev->int_port,fp_dev->rst_port);
     if (fp_dev->int_port >= 0 ) {
         gpio_free(fp_dev->int_port);
+    }
+    if (fp_dev->rst_port >= 0 ) {
+        gpio_free(fp_dev->rst_port);
     }
 
     ret = gpio_request(fp_dev->int_port, "SILFP_INT_IRQ");
@@ -355,28 +317,36 @@ static int silfp_resource_init(struct silfp_data *fp_dev, struct fp_dev_init_t *
         LOG_MSG_DEBUG(ERR_LOG, "[%s] Failed to request GPIO=%d, ret=%d",__func__,(s32)fp_dev->int_port, ret);
         status = -ENODEV;
         goto err;
-    } else {
-        gpio_direction_input(fp_dev->int_port);
-        fp_dev->irq = gpio_to_irq(fp_dev->int_port);
-        fp_dev->irq_is_disable = 0;
-
-        ret  = request_irq(fp_dev->irq,
-                           silfp_irq_handler,
-                           IRQ_TYPE_EDGE_RISING, //IRQ_TYPE_LEVEL_HIGH, //irq_table[ts->int_trigger_type],
-                           "silfp",
-                           fp_dev);
-        if ( ret < 0 ) {
-            LOG_MSG_DEBUG(ERR_LOG, "[%s] Filed to request_irq (%d), ert=%d",__func__,fp_dev->irq, ret);
-            status = -ENODEV;
-            goto err_irq;
-        } else {
-            LOG_MSG_DEBUG(INFO_LOG,"[%s] Enable_irq_wake.\n",__func__);
-            enable_irq_wake(fp_dev->irq);
-            silfp_irq_disable(fp_dev);
-        }
     }
 
-    gpio_direction_output(fp_dev->rst_port, 1);
+    gpio_direction_input(fp_dev->int_port);
+    fp_dev->irq = gpio_to_irq(fp_dev->int_port);
+    fp_dev->irq_is_disable = 0;
+
+    ret  = request_irq(fp_dev->irq,
+                       silfp_irq_handler,
+                       IRQ_TYPE_EDGE_RISING,
+                       "silfp",
+                       fp_dev);
+    if ( ret < 0 ) {
+        LOG_MSG_DEBUG(ERR_LOG, "[%s] Filed to request_irq (%d), ert=%d",__func__,fp_dev->irq, ret);
+        status = -ENODEV;
+        goto err_irq;
+    }
+
+    LOG_MSG_DEBUG(INFO_LOG,"[%s] Enable_irq_wake.\n",__func__);
+    enable_irq_wake(fp_dev->irq);
+    silfp_irq_disable(fp_dev);
+
+    if (fp_dev->rst_port >= 0 ) {
+        ret = gpio_request(fp_dev->rst_port, "SILFP_RST_PIN");
+        if (ret < 0) {
+            LOG_MSG_DEBUG(ERR_LOG, "[%s] Failed to request GPIO=%d, ret=%d",__func__,(s32)fp_dev->rst_port, ret);
+            status = -ENODEV;
+            goto err_rst;
+        }
+        gpio_direction_output(fp_dev->rst_port, 1);
+    }
 
     if (!ret) {
         if (silfp_input_init(fp_dev)) {
@@ -409,16 +379,6 @@ err_rst:
 
 err_irq:
     gpio_free(fp_dev->int_port);
-
-#ifdef BSP_SIL_POWER_SUPPLY_GPIO
-    gpio_free(fp_dev->vddio_port);
-err_vddio:
-    gpio_free(fp_dev->avdd_port);
-
-err_avdd:
-    fp_dev->avdd_port  = -1;
-    fp_dev->vddio_port = -1;
-#endif /* BSP_SIL_POWER_SUPPLY_GPIO */
 
 err:
     fp_dev->int_port = -1;
