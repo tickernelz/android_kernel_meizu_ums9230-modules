@@ -1590,6 +1590,9 @@ void ili_dev_remove(bool flag)
 	if (!ilits)
 		return;
 
+	if (flag == ENABLE)
+		ili_irq_unregister();
+
 	gpio_free(ilits->tp_int);
 	gpio_free(ilits->tp_rst);
 
@@ -1603,6 +1606,9 @@ void ili_dev_remove(bool flag)
 		flush_workqueue(bat_wq);
 		destroy_workqueue(bat_wq);
 	}
+
+	ili_node_exit();
+	ili_input_unregister();
 
 	if (ilits->ws)
 		wakeup_source_unregister(ilits->ws);
