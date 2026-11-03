@@ -28,7 +28,6 @@
 #include <linux/usb/phy.h>
 #include <linux/pm_wakeup.h>
 #include <uapi/linux/usb/charger.h>
-#include "prj/prj_config.h"
 
 #define PSC2965_REG_0				0x0
 #define PSC2965_REG_1				0x1
@@ -61,6 +60,7 @@
 
 
 #define PSC2965_REG_RESET_MASK			GENMASK(6, 6)
+#define PSC2965_REG_REG_RST_MASK		GENMASK(7, 7)
 
 #define PSC2965_REG_OTG_MASK			GENMASK(5, 5)
 #define PSC2965_REG_BOOST_FAULT_MASK		GENMASK(6, 6)
@@ -246,6 +246,11 @@ static int
 psc2965_charger_set_limit_current(struct psc2965_charger_info *info,
 				  u32 limit_cur);
 
+static int voltage_max_microvolt;
+static u32 is_vbat_add = 1;
+static int ibat;
+static bool bCccvRefresh;
+
 static bool psc2965_charger_is_bat_present(struct psc2965_charger_info *info)
 {
 	struct power_supply *psy;
@@ -413,10 +418,33 @@ psc2965_charger_set_termina_cur(struct psc2965_charger_info *info, u32 cur)
 				   reg_val);
 }
 
+static void psc2965_get_vbat_add(struct psc2965_charger_info *info)
+{
+	struct device_node *np = info->psy_usb->of_node;
+	struct device_node *battery_np;
+	const char *value;
+
+	if (!np) {
+		dev_warn(&info->psy_usb->dev, "%s currently only supports devicetree\n",
+			 __func__);
+		return;
+	}
+
+	battery_np = of_parse_phandle(np, "monitored-battery", 0);
+	if (!battery_np)
+		return;
+
+	if (!of_property_read_string(battery_np, "compatible", &value) &&
+	    !strcmp("simple-battery", value))
+		of_property_read_u32(battery_np, "vbat_add", &is_vbat_add);
+
+	of_node_put(battery_np);
+}
+
 static int psc2965_charger_hw_init(struct psc2965_charger_info *info)
 {
 	struct sprd_battery_info bat_info = {};
-	int voltage_max_microvolt, termination_cur;
+	int termination_cur;
 	int ret;
 
 	ret = sprd_battery_get_battery_info(info->psy_usb, &bat_info);
@@ -459,8 +487,8 @@ static int psc2965_charger_hw_init(struct psc2965_charger_info *info)
 	}
 
 	ret = psc2965_update_bits(info, PSC2965_REG_B,
-				  PSC2965_REG_RESET_MASK,
-				  PSC2965_REG_RESET_MASK);
+				  PSC2965_REG_REG_RST_MASK,
+				  PSC2965_REG_REG_RST_MASK);
 	if (ret) {
 		dev_err(info->dev, "reset psc2965 failed\n");
 		return ret;
@@ -498,7 +526,9 @@ static int psc2965_charger_hw_init(struct psc2965_charger_info *info)
 
   if(voltage_max_microvolt >= 4450)
   {
-    ret = psc2965_update_bits(info, PSC2965_REG_D, PSC2965_REG_ADD_R_MASK, 0x02 << 2);
+    psc2965_get_vbat_add(info);
+    printk("zhuqian is_vbat_add is %d\n", is_vbat_add);
+    ret = psc2965_update_bits(info, PSC2965_REG_D, PSC2965_REG_ADD_R_MASK, 0x00 << 2);
   	if (ret) {
   		dev_err(info->dev, "set 0x0D 0x02 failed\n");
   		return ret;
@@ -587,20 +617,24 @@ psc2965_charger_get_charge_voltage(struct psc2965_charger_info *info,
 	return 0;
 }
 
-#if 0
-static void psc2965_dump_chg_reg(struct psc2965_charger_info *info) {
-	int i = 0;
-	int ret;
-	unsigned char v = 0;
+static void psc2965_dump_chg_reg(struct psc2965_charger_info *info)
+{
+	u8 reg[PSC2965_REG_NUM + 1] = {};
+	int i, ret, v = 0;
+
 	for (i = 0; i <= PSC2965_REG_NUM; i++) {
-		ret = psc2965_read(info, i, &v);
-		if (ret < 0) {
+		ret = i2c_smbus_read_byte_data(info->client, i);
+		if (ret < 0)
 			dev_err(info->dev, "read [%d] error", i);
-		}
-		dev_info(info->dev, "psc2965_dump_chg_reg reg[%02x] = %02x\n", i, v);
+		else
+			v = ret;
+		reg[i] = v;
 	}
+
+	printk("%s:[00:%x|01:%x|02:%x|03:%x|04:%x|05:%x|06:%x|07:%x|08:%x|09:%x|0a:%x|0b:%x|0c:%x|0d:%x]",
+	       __func__, reg[0], reg[1], reg[2], reg[3], reg[4], reg[5], reg[6],
+	       reg[7], reg[8], reg[9], reg[10], reg[11], reg[12], reg[13]);
 }
-#endif
 
 static int psc2965_charger_start_charge(struct psc2965_charger_info *info)
 {
@@ -630,7 +664,8 @@ static int psc2965_charger_start_charge(struct psc2965_charger_info *info)
 */
 
 		ret = psc2965_update_bits(info, PSC2965_REG_1,
-					  PSC2965_REG_CHG_MASK,
+					  info->otg_enable ? PSC2965_REG_CHG_MASK :
+					  PSC2965_REG_CHG_MASK | PSC2965_REG_OTG_MASK,
 					  0x1 << PSC2965_REG_CHG_SHIFT);
 		if (ret) {
 			dev_err(info->dev, "enable psc2965 charge en failed\n");
@@ -649,9 +684,7 @@ static int psc2965_charger_start_charge(struct psc2965_charger_info *info)
 	if (ret)
 		dev_err(info->dev, "set psc2965 terminal cur failed\n");
 
-#if 0
-  psc2965_dump_chg_reg(info);
-#endif
+	psc2965_dump_chg_reg(info);
 
 	return ret;
 }
@@ -759,11 +792,13 @@ psc2965_charger_set_limit_current(struct psc2965_charger_info *info,
 	limit_cur = limit_cur / 1000;
 	reg_val = limit_cur / PSC2965_REG_IINLIM_BASE;
 
-	//qzhu note: need to judge usb plug out or not
-	if(info->usb_phy->chg_type == SDP_TYPE && reg_val <= 20)
-	{
-		reg_val = 20;
-	}
+	if (info->usb_phy->chg_type == UNKNOWN_TYPE ||
+	    info->usb_phy->chg_type == SDP_TYPE)
+		psc2965_update_bits(info, PSC2965_REG_D,
+				    PSC2965_REG_0x0D_TOFF_MASK, 0x03 << 4);
+	else
+		psc2965_update_bits(info, PSC2965_REG_D,
+				    PSC2965_REG_0x0D_TOFF_MASK, 0x00 << 4);
 
 	ret = psc2965_update_bits(info, PSC2965_REG_0,
 				  PSC2965_REG_LIMIT_CURRENT_MASK,
@@ -774,9 +809,7 @@ psc2965_charger_set_limit_current(struct psc2965_charger_info *info,
 	info->actual_limit_cur = reg_val * PSC2965_REG_IINLIM_BASE * 1000;
 	info->actual_limit_cur += PSC2965_LIMIT_CURRENT_OFFSET;
 
-#if 0	
 	psc2965_dump_chg_reg(info);
-#endif
   
 	return ret;
 }
@@ -846,7 +879,8 @@ static int psc2965_charger_feed_watchdog(struct psc2965_charger_info *info)
 	u32 limit_cur = 0;
 
 	ret = psc2965_update_bits(info, PSC2965_REG_1,
-				  PSC2965_REG_RESET_MASK,
+				  info->otg_enable ? PSC2965_REG_RESET_MASK :
+				  PSC2965_REG_RESET_MASK | PSC2965_REG_OTG_MASK,
 				  PSC2965_REG_RESET_MASK);
 	if (ret) {
 		dev_err(info->dev, "reset psc2965 failed\n");
@@ -1089,146 +1123,6 @@ static void psc2965_current_work(struct work_struct *data)
 	schedule_delayed_work(&info->cur_work, PSC2965_CURRENT_WORK_MS);
 }
 
-#if IS_ENABLED(CONFIG_SC27XX_PD)
-static int psc2965_charger_pd_extcon_event(struct notifier_block *nb,
-					   unsigned long event, void *param)
-{
-	struct psc2965_charger_info *info =
-		container_of(nb, struct psc2965_charger_info, pd_extcon_nb);
-
-	if (info->pd_hard_reset) {
-		dev_info(info->dev, "Already receive USB PD hard reset\n");
-		return NOTIFY_OK;
-	}
-
-	info->pd_hard_reset = true;
-	dev_info(info->dev, "Receive USB PD hard reset request\n");
-	schedule_delayed_work(&info->pd_hard_reset_work,
-			      msecs_to_jiffies(PSC2965_PD_HARD_RESET_MS));
-
-	return NOTIFY_OK;
-}
-
-static void psc2965_charger_detect_pd_extcon_status(struct psc2965_charger_info *info)
-{
-	if (!info->pd_extcon_enable)
-		return;
-
-	if (extcon_get_state(info->pd_extcon, EXTCON_CHG_USB_PD)) {
-		info->pd_hard_reset = true;
-		dev_info(info->dev, "Detect USB PD hard reset request\n");
-		schedule_delayed_work(&info->pd_hard_reset_work,
-				      msecs_to_jiffies(PSC2965_PD_HARD_RESET_MS));
-	}
-}
-
-static void psc2965_charger_pd_hard_reset_work(struct work_struct *work)
-{
-	struct delayed_work *dwork = to_delayed_work(work);
-	struct psc2965_charger_info *info = container_of(dwork,
-			struct psc2965_charger_info, pd_hard_reset_work);
-
-	if (!info->pd_hard_reset) {
-		if (info->usb_phy->chg_state == USB_CHARGER_PRESENT)
-			return;
-
-		dev_info(info->dev, "Not USB PD hard reset, charger out\n");
-
-		info->limit = 0;
-		schedule_work(&info->work);
-	}
-	info->pd_hard_reset = false;
-}
-
-static int psc2965_charger_register_pd_extcon(struct device *dev,
-					      struct psc2965_charger_info *info)
-{
-	int ret = 0;
-
-	info->pd_extcon_enable = device_property_read_bool(dev, "pd-extcon-enable");
-
-	if (!info->pd_extcon_enable)
-		return 0;
-
-	INIT_DELAYED_WORK(&info->pd_hard_reset_work, psc2965_charger_pd_hard_reset_work);
-
-	if (of_property_read_bool(dev->of_node, "extcon")) {
-		info->pd_extcon = extcon_get_edev_by_phandle(dev, 1);
-		if (IS_ERR(info->pd_extcon)) {
-			dev_err(info->dev, "failed to find pd extcon device.\n");
-			return -EPROBE_DEFER;
-		}
-
-		info->pd_extcon_nb.notifier_call = psc2965_charger_pd_extcon_event;
-		ret = devm_extcon_register_notifier_all(dev,
-							info->pd_extcon,
-							&info->pd_extcon_nb);
-		if (ret)
-			dev_err(info->dev, "Can't register pd extcon\n");
-	}
-
-	return ret;
-}
-
-static void psc2965_charger_typec_extcon_work(struct work_struct *work)
-{
-	struct delayed_work *dwork = to_delayed_work(work);
-	struct psc2965_charger_info *info =
-		container_of(dwork, struct psc2965_charger_info, typec_extcon_work);
-
-	if (!extcon_get_state(info->typec_extcon, EXTCON_USB)) {
-		info->limit = 0;
-		info->typec_online = false;
-		pm_wakeup_event(info->dev, PSC2965_WAKE_UP_MS);
-		dev_info(info->dev, "typec disconnect while pd hard reset.\n");
-		schedule_work(&info->work);
-	}
-}
-
-static int psc2965_charger_typec_extcon_event(struct notifier_block *nb,
-					      unsigned long event, void *param)
-{
-	struct psc2965_charger_info *info =
-		container_of(nb, struct psc2965_charger_info, typec_extcon_nb);
-
-	if (info->typec_online) {
-		dev_info(info->dev, "typec status change.\n");
-		schedule_delayed_work(&info->typec_extcon_work, 0);
-	}
-
-	return NOTIFY_OK;
-}
-
-static int psc2965_charger_register_typec_extcon(struct device *dev,
-						 struct psc2965_charger_info *info)
-{
-	int ret = 0;
-
-	if (!info->pd_extcon_enable)
-		return 0;
-
-	INIT_DELAYED_WORK(&info->typec_extcon_work, psc2965_charger_typec_extcon_work);
-
-	if (of_property_read_bool(dev->of_node, "extcon")) {
-		info->typec_extcon = extcon_get_edev_by_phandle(dev, 0);
-		if (IS_ERR(info->typec_extcon)) {
-			dev_err(info->dev, "failed to find typec extcon device.\n");
-			return -EPROBE_DEFER;
-		}
-
-		info->typec_extcon_nb.notifier_call = psc2965_charger_typec_extcon_event;
-		ret = devm_extcon_register_notifier_all(dev,
-							info->typec_extcon,
-							&info->typec_extcon_nb);
-		if (ret) {
-			dev_err(info->dev, "Can't register typec extcon\n");
-			return ret;
-		}
-	}
-
-	return 0;
-}
-#else
 static void psc2965_charger_detect_pd_extcon_status(struct psc2965_charger_info *info)
 {
 
@@ -1245,7 +1139,6 @@ static int psc2965_charger_register_typec_extcon(struct device *dev,
 {
 	return 0;
 }
-#endif
 
 static int psc2965_charger_usb_change(struct notifier_block *nb,
 				      unsigned long limit, void *data)
@@ -1479,7 +1372,9 @@ static int psc2965_charger_usb_set_property(struct power_supply *psy,
 		break;
 
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
-		ret = psc2965_charger_set_termina_vol(info, val->intval / 1000);
+		ret = psc2965_charger_set_termina_vol(info, bCccvRefresh ?
+						      voltage_max_microvolt - 32 :
+						      val->intval / 1000);
 		if (ret < 0)
 			dev_err(info->dev, "failed to set terminate voltage\n");
 		break;
@@ -1517,6 +1412,34 @@ static int psc2965_charger_usb_set_property(struct power_supply *psy,
 		else
 			cancel_delayed_work_sync(&info->wdt_work);
 		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		if (!is_vbat_add || voltage_max_microvolt < 4450)
+			break;
+
+		if (val->intval >= 4455) {
+			dev_err(info->dev, "qzhu vbat is %d, switch to %d\n",
+				val->intval, voltage_max_microvolt - 32);
+			bCccvRefresh = true;
+			ret = psc2965_charger_set_termina_vol(info, voltage_max_microvolt - 32);
+		} else if (val->intval >= 4448) {
+			dev_err(info->dev, "qzhu vbat is %d, reduce voltage\n", val->intval);
+			bCccvRefresh = false;
+			psc2965_charger_set_termina_vol(info, voltage_max_microvolt);
+			ret = psc2965_update_bits(info, PSC2965_REG_D,
+						  PSC2965_REG_ADD_R_MASK, 0x00 << 2);
+		} else if (val->intval < 4410 && ibat > 500) {
+			dev_err(info->dev, "qzhu vbat is %d, add voltage\n", val->intval);
+			bCccvRefresh = false;
+			psc2965_charger_set_termina_vol(info, voltage_max_microvolt);
+			ret = psc2965_update_bits(info, PSC2965_REG_D,
+						  PSC2965_REG_ADD_R_MASK, 0x01 << 2);
+		} else {
+			dev_err(info->dev, "qzhu vbat is %d do nothing\n", val->intval);
+		}
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
+		ibat = val->intval;
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -1537,6 +1460,8 @@ static int psc2965_charger_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TYPE:
 	case POWER_SUPPLY_PROP_STATUS:
 	case POWER_SUPPLY_PROP_PRESENT:
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		ret = 1;
 		break;
 
@@ -1897,6 +1822,8 @@ static int psc2965_charger_enable_otg(struct regulator_dev *dev)
 	struct psc2965_charger_info *info = rdev_get_drvdata(dev);
 	int ret = 0;
 
+	printk("psc2965_charger_enable_otg\n");
+
 	if (!info) {
 		pr_err("%s:line%d: NULL pointer!!!\n", __func__, __LINE__);
 		return -EINVAL;
@@ -1939,6 +1866,8 @@ static int psc2965_charger_disable_otg(struct regulator_dev *dev)
 {
 	struct psc2965_charger_info *info = rdev_get_drvdata(dev);
 	int ret = 0;
+
+	printk("psc2965_charger_disable_otg\n");
 
 	if (!info) {
 		pr_err("%s:line%d: NULL pointer!!!\n", __func__, __LINE__);
@@ -2142,7 +2071,6 @@ static int psc2965_charger_probe(struct i2c_client *client,
 	bat_present = psc2965_charger_is_bat_present(info);
 
 	mutex_init(&info->lock);
-	mutex_lock(&info->lock);
 
 	charger_cfg.drv_data = info;
 	charger_cfg.of_node = dev->of_node;
@@ -2226,7 +2154,6 @@ static int psc2965_charger_probe(struct i2c_client *client,
 		dev_err(dev, "failed to get irq gpio\n");
 	}
 
-	mutex_unlock(&info->lock);
 	psc2965_charger_detect_status(info);
 	psc2965_charger_detect_pd_extcon_status(info);
 	
@@ -2241,7 +2168,6 @@ err_psy_usb:
 	if (info->irq_gpio)
 		gpio_free(info->irq_gpio);
 err_regmap_exit:
-	mutex_unlock(&info->lock);
 	mutex_destroy(&info->lock);
 	return ret;
 }
@@ -2250,6 +2176,11 @@ static void psc2965_charger_shutdown(struct i2c_client *client)
 {
 	struct psc2965_charger_info *info = i2c_get_clientdata(client);
 	int ret = 0;
+
+	printk("%s line: %d\n", __func__, __LINE__);
+
+	if (voltage_max_microvolt >= 4450)
+		psc2965_update_bits(info, PSC2965_REG_D, PSC2965_REG_ADD_R_MASK, 0x00 << 2);
 
 	cancel_delayed_work_sync(&info->wdt_work);
 	if (info->otg_enable) {
@@ -2268,6 +2199,9 @@ static void psc2965_charger_shutdown(struct i2c_client *client)
 			dev_err(info->dev,
 				"enable charger detection function failed ret = %d\n", ret);
 	}
+
+	psc2965_update_bits(info, PSC2965_REG_B, PSC2965_REG_REG_RST_MASK,
+			    PSC2965_REG_REG_RST_MASK);
 }
 
 static int psc2965_charger_remove(struct i2c_client *client)
