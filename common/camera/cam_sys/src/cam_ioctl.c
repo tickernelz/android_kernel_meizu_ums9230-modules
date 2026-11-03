@@ -17,7 +17,7 @@
 
 #ifdef CAM_IOCTL_LAYER
 
-extern g_dbg_raw2frgb_switch;
+extern uint32_t g_dbg_raw2frgb_switch;
 
 #define IS_XTM_CONFLICT_SCENE(scene) ({\
 	uint32_t __s = scene;          \

@@ -19,8 +19,7 @@ KO_MODULE_NAME := sprd_audio_usb_offload
 KO_MODULE_PATH := $(src)
 KO_MODULE_SRC  :=
 
-ccflags-y += -I$(KO_MODULE_PATH)/../../../../../kernel5.15/kernel5.15/sound/usb
-ccflags-y += -I$(KO_MODULE_PATH)/../../../../../kernel/kernel5.15/sound/usb
+ccflags-y += -I$(srctree)/sound/usb
 
 KO_MODULE_SRC += $(wildcard $(KO_MODULE_PATH)/*.c)
 

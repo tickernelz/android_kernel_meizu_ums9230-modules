@@ -3229,7 +3229,7 @@ int isp_slice_base_cfg(void *cfg_in, void *slice_ctx,
 	return ret;
 }
 
-void *isp_slice_ctx_get()
+void *isp_slice_ctx_get(void)
 {
 	struct isp_slice_context *ptr;
 

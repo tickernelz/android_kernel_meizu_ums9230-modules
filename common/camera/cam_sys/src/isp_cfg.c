@@ -495,7 +495,7 @@ struct isp_cfg_ctx_desc s_ctx_desc = {
 	.ops = &cfg_ops,
 };
 
-struct isp_cfg_ctx_desc *isp_cfg_ctx_desc_get()
+struct isp_cfg_ctx_desc *isp_cfg_ctx_desc_get(void)
 {
 	return &s_ctx_desc;
 }

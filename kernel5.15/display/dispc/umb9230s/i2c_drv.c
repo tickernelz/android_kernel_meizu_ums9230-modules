@@ -149,7 +149,7 @@ static void sprd_i2c_send_stop(void __iomem *addr, int stop)
 		writel(tmp | STP_EN, addr + I2C_CTL);
 }
 
-sprd_i2c_opt_mode(void __iomem *addr, int rw)
+static int sprd_i2c_opt_mode(void __iomem *addr, int rw)
 {
 	int cmd = readl(addr + I2C_CTL) & (~I2C_MODE);
 
@@ -258,7 +258,7 @@ void sprd_i2c_reset(void)
 		dev_err(i2c_dev->dev, "i2c soft reset failed, ret = %d\n", ret);
 }
 
-void sprd_i2c_enable()
+void sprd_i2c_enable(void)
 {
 	u32 tmp = I2C_OUT_OPT;
 	void __iomem *addr;

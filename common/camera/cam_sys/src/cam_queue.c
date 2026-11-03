@@ -303,7 +303,7 @@ int cam_queue_frame_put_thread(void *param)
 	return ret;
 }
 
-int cam_queue_empty_frame_init()
+int cam_queue_empty_frame_init(void)
 {
 	struct cam_queue_frame_manager *frame_manager = g_frame_manager;
 	int32_t i = 0, j = 0, array_index = 0;
@@ -347,7 +347,7 @@ int cam_queue_empty_frame_init()
 	return 0;
 }
 
-int cam_queue_empty_frame_deinit()
+int cam_queue_empty_frame_deinit(void)
 {
 	struct cam_queue_frame_manager *frame_manager = g_frame_manager;
 	int32_t i = 0;
