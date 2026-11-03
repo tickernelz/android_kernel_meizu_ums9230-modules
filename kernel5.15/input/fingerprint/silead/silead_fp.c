@@ -54,7 +54,6 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/of_platform.h>
-#include <linux/pinctrl/consumer.h>
 #include <linux/regulator/consumer.h>
 #include <linux/gpio.h>
 #include <linux/input.h>
@@ -63,7 +62,6 @@
 #include <linux/version.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/hardware_info.h>
 
 #include <net/sock.h>
 #include <linux/uaccess.h>
@@ -100,11 +98,6 @@ struct silfp_msg_list {
     struct list_head list;
 };
 #endif /* !BSP_SIL_NETLINK */
-
-static const char * const pctl_names[] = {
-    "anc_spi_output_low",
-    "anc_spi_active",
-};
 
 struct silfp_data {
     dev_t       devt;
@@ -170,10 +163,6 @@ struct silfp_data {
     struct fp_plat_t pin;
 
     atomic_t  init;
-
-    /* for spi status */
-    struct pinctrl *fingerprint_pinctrl;
-    struct pinctrl_state *pinctrl_state[ARRAY_SIZE(pctl_names)];
 };
 
 typedef enum _fp_spi_speet_t {
@@ -242,8 +231,6 @@ struct class *silfp_class;
 
 static struct workqueue_struct *silfp_wq;
 struct silfp_data *g_fp_dev = NULL;
-static int fp_nav_switch_status = 0;
-static int fp_cam_switch_status = 0;
 static void silfp_hw_reset(struct silfp_data *fp_dev, u8 delay);
 static void silfp_irq_disable(struct silfp_data *fp_dev);
 static void silfp_irq_enable(struct silfp_data *fp_dev);
@@ -552,88 +539,6 @@ static int silfp_fb_callback(struct notifier_block *notif,
     return retval;
 }
 #endif /* CONFIG_HAS_EARLYSUSPEND */
-
-static ssize_t fp_cam_switch_show(struct device *dev,
-        struct device_attribute *attr, char *buf)
-{
-        return sprintf(buf, "%s\n",
-               fp_cam_switch_status? "true" : "false");
-}
-
-static ssize_t fp_cam_switch_store(struct device *dev,
-        struct device_attribute *attr, const char *buf, size_t count)
-{
-    if ((buf[0] == '1') ) {
-        fp_cam_switch_status = 1;
-		silfp_netlink_send(g_fp_dev, SIFP_NETLINK_CAM_ON);
-    } else if ((buf[0] == '0')) {
-        fp_cam_switch_status = 0;
-		silfp_netlink_send(g_fp_dev, SIFP_NETLINK_CAM_OFF);
-    }
-    LOG_MSG_DEBUG(INFO_LOG, "[%s] fp_cam_switch_status %d\n", __func__, fp_cam_switch_status);
-    return count;
-}
-static DEVICE_ATTR_RW(fp_cam_switch);
-static ssize_t fp_nav_switch_show(struct device *dev,
-        struct device_attribute *attr, char *buf)
-{
-        return sprintf(buf, "%s\n",
-               fp_nav_switch_status? "true" : "false");
-}
-static ssize_t fp_nav_switch_store(struct device *dev,
-        struct device_attribute *attr, const char *buf, size_t count)
-{
-    if ((buf[0] == '1') ) {
-        fp_nav_switch_status = 1;
-		silfp_netlink_send(g_fp_dev, SIFP_NETLINK_NAV_ON);
-    } else if ((buf[0] == '0')) {
-        fp_nav_switch_status = 0;
-		silfp_netlink_send(g_fp_dev, SIFP_NETLINK_NAV_OFF);
-    }
-    LOG_MSG_DEBUG(INFO_LOG, "[%s] fp_nav_switch_status %d\n", __func__, fp_nav_switch_status);
-    return count;
-}
-static DEVICE_ATTR_RW(fp_nav_switch);
-/*add screen status */
-static ssize_t fp_suspend_show(struct device *dev,
-        struct device_attribute *attr, char *buf)
-{
-	if(g_fp_dev != NULL){
-        return sprintf(buf, "%s\n",
-               g_fp_dev->scr_off? "true" : "false");
-	}else{
-        return sprintf(buf, "%s\n",
-               g_fp_dev? "true" : "false");
-	}
-}
-
-static ssize_t fp_suspend_store(struct device *dev,
-        struct device_attribute *attr, const char *buf, size_t count)
-{
-	if(g_fp_dev != NULL){
-		if ((buf[0] == '1') ) {
-			LOG_MSG_DEBUG(INFO_LOG, "[%s] LCD ON\n", __func__);
-			g_fp_dev->scr_off = 0;
-			silfp_netlink_send(g_fp_dev, SIFP_NETLINK_SCR_ON);
-		} else if ((buf[0] == '0')) {
-			LOG_MSG_DEBUG(INFO_LOG, "[%s] LCD OFF\n", __func__);
-			g_fp_dev->scr_off = 1;
-			silfp_netlink_send(g_fp_dev, SIFP_NETLINK_SCR_OFF);
-		}
-	}
-    return count;
-}
-
-static DEVICE_ATTR_RW(fp_suspend);
-static struct attribute *fp_debug_attrs[] = {
-        &dev_attr_fp_suspend.attr,
-		&dev_attr_fp_nav_switch.attr,
-		&dev_attr_fp_cam_switch.attr,
-        NULL,
-};
-static struct attribute_group fp_debug_attr_group = {
-        .attrs = fp_debug_attrs,
-};
 
 /* -------------------------------------------------------------------- */
 /*                            IRQ related functions                     */
@@ -1024,7 +929,6 @@ static int silfp_init(struct silfp_data *fp_dev)
 #endif /* CONFIG_HAS_EARLYSUSPEND */
 
     atomic_set(&fp_dev->spionoff_count,0);
-    get_hardware_info_data(HWID_FINGERPRINT, "gsl6193");
 
     return status;
 }
@@ -1058,7 +962,6 @@ static int silfp_resource_deinit(struct silfp_data *fp_dev)
             fp_dev->rst_port = -1;
             silfp_input_deinit(fp_dev);
             silfp_power_deinit(fp_dev);
-            use_pinctrl_deinit(fp_dev);
 #ifdef PROC_NODE
             silfp_proc_deinit(fp_dev);
 #endif /* PROC_NODE */
@@ -1170,7 +1073,6 @@ silfp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
         if (fp_dev->power_is_off) {
             silfp_hw_poweron(fp_dev);
-            select_pin_ctl(fp_dev, "anc_spi_active");
             mdelay(5);
         }
         fp_dev->irq_ignore = 1;
@@ -1317,7 +1219,6 @@ silfp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 retval = -EFAULT;
                 break;
             }
-            get_hardware_info_data(HWID_FINGERPRINT, vendor_name);
             retval = silfp_proc_create_node(fp_dev);
         }
 #endif /* PROC_NODE */
@@ -1529,8 +1430,6 @@ static int silfp_probe(struct platform_device *spi)
     silfp_proc_init(fp_dev);
 #endif /* PROC_NODE */
 
-    status = sysfs_create_group(&fp_dev->dev->kobj,
-                &fp_debug_attr_group);
     platform_set_drvdata(spi, fp_dev);
     return status;
 

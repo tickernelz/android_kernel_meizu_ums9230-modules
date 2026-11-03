@@ -1,5 +1,5 @@
 #
-# silead_fp.ko
+# revofp_silead.ko
 #
 # Makefile: for external make invocation
 #
@@ -8,7 +8,7 @@
 #   done in this Makefile
 #
 
-KO_MODULE_NAME := silead_fp
+KO_MODULE_NAME := revofp_silead
 KO_MODULE_OUT := $(BSP_MODULES_OUT)/$(KO_MODULE_NAME)
 KO_MODULE_KBUILD := $(CURDIR)/Kbuild
 

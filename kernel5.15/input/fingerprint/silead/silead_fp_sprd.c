@@ -27,105 +27,9 @@
 
 #include <linux/of_irq.h>
 
-#define SPI_CS_PIN 154
-
 static irqreturn_t silfp_irq_handler(int irq, void *dev_id);
 static void silfp_work_func(struct work_struct *work);
 static int silfp_input_init(struct silfp_data *fp_dev);
-
-static int select_pin_ctl(struct silfp_data *data, const char *name) {
-	size_t i;
-	int ret_val = 0;
-
-	LOG_MSG_DEBUG(INFO_LOG, "[%s] name:%s\n", __func__, name);
-	if (IS_ERR_OR_NULL(data->fingerprint_pinctrl))
-		return -EINVAL;
-	for (i = 0; i < ARRAY_SIZE(data->pinctrl_state); i++) {
-		const char *n = pctl_names[i];
-
-		if (!strncmp(n, name, strlen(n))) {
-			ret_val = pinctrl_select_state(data->fingerprint_pinctrl, data->pinctrl_state[i]);
-			if (ret_val)
-				LOG_MSG_DEBUG(ERR_LOG, "[%s] can not selected %s\n", __func__, name);
-			else
-				LOG_MSG_DEBUG(INFO_LOG, "[%s] selected %s\n", __func__, name);
-
-			goto exit;
-		}
-	}
-
-	ret_val = -EINVAL;
-	LOG_MSG_DEBUG(ERR_LOG, "[%s] %s can not match\n", __func__, name);
-
-	exit:
-	return ret_val;
-}
-
-static int spi_to_gpio_outlow(struct silfp_data *fp_dev)
-{
-	int ret = -1;
-
-	ret = select_pin_ctl(fp_dev, "anc_spi_output_low");
-	if (ret) {
-		LOG_MSG_DEBUG(ERR_LOG, "[%s] select pin failed!\n", __func__);
-		return ret;
-	}
-	mdelay(4);
-	ret = gpio_request(SPI_CS_PIN, "SPI0_CS");
-	if (ret) {
-		LOG_MSG_DEBUG(ERR_LOG, "[%s] request gpio failed\n", __func__);
-		return ret;
-	}
-	gpio_direction_output(SPI_CS_PIN, 0);
-	LOG_MSG_DEBUG(INFO_LOG, "[%s] spi cs_gpio value:%d\n", __func__, gpio_get_value(SPI_CS_PIN));
-	gpio_free(SPI_CS_PIN);
-
-	return ret;
-}
-
-static int use_pinctrl_init(struct silfp_data *data) {
-	int ret_val = 0;
-	struct device *dev = &data->spi->dev;
-	size_t i = 0;
-
-	data->fingerprint_pinctrl = devm_pinctrl_get(dev);
-	if (IS_ERR(data->fingerprint_pinctrl)) {
-		if (PTR_ERR(data->fingerprint_pinctrl) == -EPROBE_DEFER) {
-			LOG_MSG_DEBUG(ERR_LOG,"pinctrl not ready");
-			return -EPROBE_DEFER;
-		}
-		LOG_MSG_DEBUG(ERR_LOG,"Target does not use pinctrl");
-		data->fingerprint_pinctrl = NULL;
-		return -EINVAL;
-	}
-
-	for (i = 0; i < ARRAY_SIZE(data->pinctrl_state); i++) {
-		struct pinctrl_state *state =
-				pinctrl_lookup_state(data->fingerprint_pinctrl, pctl_names[i]);
-		if (IS_ERR(state)) {
-			LOG_MSG_DEBUG(ERR_LOG,"cannot find '%s'", pctl_names[i]);
-			return -EINVAL;
-		}
-		LOG_MSG_DEBUG(INFO_LOG,"found pin control %s", pctl_names[i]);
-		data->pinctrl_state[i] = state;
-	}
-
-	ret_val = spi_to_gpio_outlow(data);
-	if (ret_val)
-		LOG_MSG_DEBUG(ERR_LOG,"[%s] set spi cs_gpio to low failed\n", __func__);
-
-	return ret_val;
-}
-
-static void use_pinctrl_deinit(struct silfp_data *data)
-{
-	if (data->fingerprint_pinctrl) {
-		spi_to_gpio_outlow(data);
-		devm_pinctrl_put(data->fingerprint_pinctrl);
-		data->fingerprint_pinctrl = NULL;
-		LOG_MSG_DEBUG(ERR_LOG,"[%s] success", __func__);
-	}
-}
 
 /* -------------------------------------------------------------------- */
 /*                            power supply                              */
@@ -201,9 +105,6 @@ static void silfp_hw_poweroff(struct silfp_data *fp_dev)
     }
 #endif /* BSP_SIL_POWER_SUPPLY_GPIO */
     fp_dev->power_is_off = 1;
-
-    if (spi_to_gpio_outlow(fp_dev))
-        LOG_MSG_DEBUG(ERR_LOG, "[%s] set spi cs_gpio to low failed\n", __func__);
 }
 
 static void silfp_power_deinit(struct silfp_data *fp_dev)
@@ -276,7 +177,6 @@ static void silfp_pwdn(struct silfp_data *fp_dev, u8 flag_avdd)
         silfp_hw_poweroff(fp_dev);
         msleep(200*RESET_TIME_MULTIPLE);
         silfp_hw_poweron(fp_dev);
-        select_pin_ctl(fp_dev, "anc_spi_active");
     }
 
     if ( fp_dev->rst_port >= 0 ) {
@@ -401,12 +301,6 @@ static int silfp_resource_init(struct silfp_data *fp_dev, struct fp_dev_init_t *
     fp_dev->rst_port = -1;
     silfp_parse_dts(fp_dev);
 
-    status = use_pinctrl_init(fp_dev);
-    if (status) {
-        LOG_MSG_DEBUG(ERR_LOG,"[%s] spi pinctrl init failed\n",__func__);
-        goto pinctrl_err;
-    }
-
 #ifdef BSP_SIL_POWER_SUPPLY_GPIO
     fp_dev->avdd_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "avdd-gpios", 0);
     fp_dev->vddio_port = of_get_named_gpio(fp_dev->spi->dev.of_node, "vddio-gpios", 0);
@@ -483,7 +377,6 @@ static int silfp_resource_init(struct silfp_data *fp_dev, struct fp_dev_init_t *
     }
 
     gpio_direction_output(fp_dev->rst_port, 1);
-    select_pin_ctl(fp_dev, "anc_spi_active");
 
     if (!ret) {
         if (silfp_input_init(fp_dev)) {
@@ -526,9 +419,6 @@ err_avdd:
     fp_dev->avdd_port  = -1;
     fp_dev->vddio_port = -1;
 #endif /* BSP_SIL_POWER_SUPPLY_GPIO */
-
-pinctrl_err:
-    use_pinctrl_deinit(fp_dev);
 
 err:
     fp_dev->int_port = -1;

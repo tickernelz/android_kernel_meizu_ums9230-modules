@@ -237,7 +237,6 @@ struct fp_dev_touch_info {
 /* Todo: enable correct power supply mode */
 //#define BSP_SIL_POWER_SUPPLY_REGULATOR
 //#define BSP_SIL_POWER_SUPPLY_PINCTRL
-#define BSP_SIL_POWER_SUPPLY_GPIO
 
 /* AVDD voltage range 2.8v ~ 3.3v */
 #define AVDD_MAX  3000000
