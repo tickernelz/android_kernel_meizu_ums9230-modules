@@ -1,0 +1,12 @@
+KO_MODULE_NAME := flash_ic_gpio
+KO_MODULE_PATH := $(src)
+KO_MODULE_SRC  :=
+
+KO_MODULE_SRC += $(wildcard $(KO_MODULE_PATH)/*.c)
+
+ccflags-y += -I$(KO_MODULE_PATH)/../flash_drv
+ccflags-y += -I$(KO_MODULE_PATH)/../../interface
+ccflags-y += -I$(KO_MODULE_PATH)/../../interface/cam_sys
+
+obj-m := $(KO_MODULE_NAME).o
+$(KO_MODULE_NAME)-y := flash_ic_gpio_drv.o
