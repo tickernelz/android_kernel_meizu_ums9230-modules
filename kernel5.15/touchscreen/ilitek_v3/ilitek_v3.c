@@ -1490,16 +1490,15 @@ int ili_tddi_init(void)
 	ili_ic_init();
 	ilitek_tddi_wq_init();
 
-	ilits->demo_debug_info[0] = ili_demo_debug_info_id0;
-	ilits->tp_data_format = DATA_FORMAT_DEMO;
-	ilits->boot = false;
-	ilits->PenType = POSITION_PEN_TYPE_OFF;
-
 	/* Must do hw reset once in first time for work normally if tp reset is avaliable */
 #if !TDDI_RST_BIND
 	if (ili_reset_ctrl(ilits->reset) < 0)
 		ILI_ERR("TP Reset failed during init\n");
 #endif
+
+	ilits->demo_debug_info[0] = ili_demo_debug_info_id0;
+	ilits->tp_data_format = DATA_FORMAT_DEMO;
+	ilits->boot = false;
 
 	/*
 	 * This status of ice enable will be reset until process of fw upgrade runs.
@@ -1563,15 +1562,16 @@ int ili_tddi_init(void)
 	ILI_INFO("Registre touch to input subsystem\n");
 	ili_input_register();
 
-	ili_input_pen_register();
-
+	if (ilits->PenType == POSITION_PEN_TYPE_ON) {
+		ili_input_pen_register();
+	}
 	ili_wq_ctrl(WQ_ESD, ENABLE);
 	ili_wq_ctrl(WQ_BAT, ENABLE);
 	ilits->boot = true;
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
-	ilits->ws = wakeup_source_register("ili_wakelock");
+	ilits->ws = wakeup_source_register(NULL,"ili_wakelock");
 #else
 	ilits->ws = wakeup_source_register(ilits->dev, "ili_wakelock");
 #endif
