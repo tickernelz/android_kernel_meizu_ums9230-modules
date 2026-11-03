@@ -1571,7 +1571,7 @@ int ili_tddi_init(void)
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
-	ilits->ws = wakeup_source_register(NULL,"ili_wakelock");
+	ilits->ws = wakeup_source_register("ili_wakelock");
 #else
 	ilits->ws = wakeup_source_register(ilits->dev, "ili_wakelock");
 #endif
