@@ -68,7 +68,7 @@
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
-#define FTS_DRIVER_NAME                     "ft8725_ts"
+#define FTS_DRIVER_NAME                     "fts_ts"
 
 #define FTS_MAX_POINTS_SUPPORT              10 /* constant value, can't be changed */
 #define FTS_MAX_KEYS                        4
@@ -309,8 +309,6 @@ enum _FTS_GESTURE_BMODE {
 * Global variable or extern global variabls/functions
 *****************************************************************************/
 extern struct fts_ts_data *fts_data;
-extern volatile bool tp_spi_safaMode;
-extern volatile bool tp_spi_ignSafeModeIrq;
 
 /* communication interface */
 int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen);
@@ -378,7 +376,5 @@ int fts_ex_mode_recovery(struct fts_ts_data *ts_data);
 
 void fts_irq_disable(void);
 void fts_irq_enable(void);
-void check_current_mode(void);
 
-int fts_ts_suspend(struct device *dev);
 #endif /* __LINUX_FOCALTECH_CORE_H__ */

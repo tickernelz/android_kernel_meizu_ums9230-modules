@@ -36,17 +36,6 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 
-#if IS_ENABLED(CONFIG_DRM)
-#if IS_ENABLED(CONFIG_DRM_PANEL)
-#include <drm/drm_panel.h>
-#else
-#include <linux/msm_drm_notify.h>
-#endif //CONFIG_DRM_PANEL
-
-#elif IS_ENABLED(CONFIG_FB)
-#include <linux/notifier.h>
-#include <linux/fb.h>
-#endif //CONFIG_DRM
 #include "focaltech_core.h"
 
 /*****************************************************************************
@@ -68,14 +57,9 @@
 *****************************************************************************/
 struct fts_ts_data *fts_data;
 
-#if IS_ENABLED(CONFIG_TRUSTY_TUI)
-extern bool is_in_tui(void);
-extern void notify_cancel_tui(void);
-#endif
 /*****************************************************************************
 * Static function prototypes
 *****************************************************************************/
-//static int fts_ts_suspend(struct device *dev);
 static int fts_ts_resume(struct device *dev);
 
 int fts_check_cid(struct fts_ts_data *ts_data, u8 id_h)
@@ -516,7 +500,7 @@ static int fts_input_report_b(struct fts_ts_data *ts_data, struct ts_event *even
 
             if ((ts_data->log_level >= 2) ||
                 ((1 == ts_data->log_level) && (FTS_TOUCH_DOWN == events[i].flag))) {
-                FTS_DBG("[B]P%d(%d, %d)[p:%d,tm:%d] DOWN!",
+                FTS_DEBUG("[B]P%d(%d, %d)[p:%d,tm:%d] DOWN!",
                           events[i].id, events[i].x, events[i].y,
                           events[i].p, events[i].area);
             }
@@ -524,14 +508,14 @@ static int fts_input_report_b(struct fts_ts_data *ts_data, struct ts_event *even
             input_mt_slot(input_dev, events[i].id);
             input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, false);
             touch_point_pre &= ~(1 << events[i].id);
-            FTS_DBG("[B]P%d UP!", events[i].id);
+            if (ts_data->log_level >= 1) FTS_DEBUG("[B]P%d UP!", events[i].id);
         }
     }
 
     if (unlikely(touch_point_pre ^ touch_down_point_cur)) {
         for (i = 0; i < max_touch_num; i++)  {
             if ((1 << i) & (touch_point_pre ^ touch_down_point_cur)) {
-                FTS_DBG("[B]P%d UP!", i);
+                if (ts_data->log_level >= 1) FTS_DEBUG("[B]P%d UP!", i);
                 input_mt_slot(input_dev, i);
                 input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, false);
             }
@@ -542,7 +526,7 @@ static int fts_input_report_b(struct fts_ts_data *ts_data, struct ts_event *even
         input_report_key(input_dev, BTN_TOUCH, 1);
     else if (touch_event_coordinate || ts_data->touch_points) {
         if (ts_data->touch_points && (ts_data->log_level >= 1))
-            FTS_DBG("[B]Points All Up!");
+            FTS_DEBUG("[B]Points All Up!");
         input_report_key(input_dev, BTN_TOUCH, 0);
     }
 
@@ -1689,15 +1673,11 @@ static int fts_parse_dt(struct device *dev, struct fts_ts_platform_data *pdata)
     /* reset, irq gpio info */
     pdata->reset_gpio = of_get_named_gpio_flags(np, "focaltech,reset-gpio",
                         0, &pdata->reset_gpio_flags);
-    if (pdata->reset_gpio < 0)
-        FTS_ERROR("Unable to get reset_gpio");
 
     pdata->irq_gpio = of_get_named_gpio_flags(np, "focaltech,irq-gpio",
                       0, &pdata->irq_gpio_flags);
-    if (pdata->irq_gpio < 0)
-        FTS_ERROR("Unable to get irq_gpio");
 
-    ret = of_property_read_u32(np, "focaltech,max-touch-number_for_8725", &temp_val);
+    ret = of_property_read_u32(np, "focaltech,max-touch-number", &temp_val);
     if (ret < 0) {
         FTS_ERROR("Unable to get max-touch-number, please check dts");
         pdata->max_touch_number = FTS_MAX_POINTS_SUPPORT;
@@ -1717,74 +1697,6 @@ static int fts_parse_dt(struct device *dev, struct fts_ts_platform_data *pdata)
     return 0;
 }
 
-int fts_ts_suspend(struct device *dev)
-{
-    int ret = 0, retry = 10;
-    struct fts_ts_data *ts_data = fts_data;
-
-    FTS_FUNC_ENTER();
-    if (ts_data->suspended) {
-        FTS_INFO("Already in suspend state");
-        return 0;
-    }
-
-#if IS_ENABLED(CONFIG_TRUSTY_TUI)
-	/*if trusty is opened now, cancel tui*/
-	if (is_in_tui()) {
-		FTS_INFO("waiting for tui to exit first!");
-		notify_cancel_tui();
-		/*it seems it needs 1s for tui to exit*/
-		while (retry && tp_spi_safaMode) {
-			mdelay(200);
-			retry--;
-		}
-		if (tp_spi_safaMode) {
-			FTS_INFO("in TUI, cannot suspend!");
-			return 0;
-		}
-	}
-	retry = 10;
-#endif
-
-    while (retry && ts_data->fw_loading) {
-    	FTS_INFO("fw upgrade in process, waiting");
-    	mdelay(100);
-    	retry--;
-    }
-
-    if (ts_data->fw_loading) {
-        FTS_INFO("fw upgrade in process, can't suspend");
-        return 0;
-    }
-
-
-    fts_esdcheck_suspend(ts_data);
-
-    if (ts_data->gesture_support) {
-        fts_gesture_suspend(ts_data);
-    } else {
-        fts_irq_disable();
-
-    FTS_INFO("make TP enter into sleep mode");
-    ret = fts_write_reg(FTS_REG_POWER_MODE, FTS_REG_POWER_MODE_SLEEP);
-    if (ret < 0)
-        FTS_ERROR("set TP to sleep mode fail, ret=%d", ret);
-
-    if (!ts_data->ic_info.is_incell) {
-#if FTS_POWER_SOURCE_CUST_EN
-            ret = fts_power_source_suspend(ts_data);
-            if (ret < 0) {
-                FTS_ERROR("power enter suspend fail");
-            }
-#endif
-        }
-    }
-
-    fts_release_all_finger();
-    ts_data->suspended = true;
-    FTS_FUNC_EXIT();
-    return 0;
-}
 
 static int fts_ts_resume(struct device *dev)
 {
@@ -1818,7 +1730,6 @@ static int fts_ts_resume(struct device *dev)
         fts_irq_enable();
     }
 
-    FTS_INFO("make TP enter into resume mode");
     FTS_FUNC_EXIT();
     return 0;
 }
@@ -1830,147 +1741,6 @@ static void fts_resume_work(struct work_struct *work)
 }
 
 
-#if IS_ENABLED(CONFIG_DRM)
-#if IS_ENABLED(CONFIG_DRM_PANEL)
-static struct drm_panel *active_panel;
-
-static int drm_check_dt(struct fts_ts_data *ts_data)
-{
-    int i = 0;
-    int count = 0;
-    struct device_node *node = NULL;
-    struct drm_panel *panel = NULL;
-    struct device_node *np = NULL;
-
-    if (ts_data && ts_data->dev && ts_data->dev->of_node) {
-        np = ts_data->dev->of_node;
-        count = of_count_phandle_with_args(np, "panel", NULL);
-        if (count <= 0) {
-            FTS_ERROR("find drm_panel count(%d) fail", count);
-            return -ENODEV;
-        }
-
-        for (i = 0; i < count; i++) {
-            node = of_parse_phandle(np, "panel", i);
-            panel = of_drm_find_panel(node);
-            of_node_put(node);
-            if (!IS_ERR(panel)) {
-                FTS_INFO("find drm_panel successfully");
-                active_panel = panel;
-                return 0;
-            }
-        }
-    }
-
-    FTS_ERROR("no find drm_panel");
-    return -ENODEV;
-}
-#endif //CONFIG_DRM_PANEL
-#endif //CONFIG_DRM
-
-
-static int fb_notifier_callback(struct notifier_block *self, unsigned long event, void *v)
-{
-    struct fts_ts_data *ts_data = container_of(self, struct fts_ts_data, fb_notif);
-    FTS_FUNC_ENTER();
-    if (ts_data && v) {
-#if IS_ENABLED(CONFIG_DRM)
-
-#if IS_ENABLED(CONFIG_DRM_PANEL)
-   /*
-    * UNISOC: not use drm_panel_notifier, use ts_suspend
-	int blank_value = *((int *)(((struct drm_panel_notifier *)v)->data));
-	const unsigned long event_enum[2] = {DRM_PANEL_EARLY_EVENT_BLANK, DRM_PANEL_EVENT_BLANK};
-	const int blank_enum[2] = {DRM_PANEL_BLANK_POWERDOWN, DRM_PANEL_BLANK_UNBLANK};
-    */
-#else //CONFIG_DRM_PANEL
-        int blank_value = *((int *)(((struct msm_drm_notifier *)v)->data));
-        const unsigned long event_enum[2] = {MSM_DRM_EARLY_EVENT_BLANK, MSM_DRM_EVENT_BLANK};
-        const int blank_enum[2] = {MSM_DRM_BLANK_POWERDOWN, MSM_DRM_BLANK_UNBLANK};
-#endif //CONFIG_DRM_PANEL
-
-#elif IS_ENABLED(CONFIG_FB)
-        const unsigned long event_enum[2] = {FB_EARLY_EVENT_BLANK, FB_EVENT_BLANK};
-        const int blank_enum[2] = {FB_BLANK_POWERDOWN, FB_BLANK_UNBLANK};
-        int blank_value = *((int *)(((struct fb_event *)v)->data));
-#endif //CONFIG_DRM
-   /*
-    * UNISOC: not use drm_panel_notifier, use ts_suspend
-        FTS_INFO("notifier,event:%lu,blank:%d", event, blank_value);
-        if ((blank_enum[1] == blank_value) && (event_enum[1] == event)) {
-            queue_work(fts_data->ts_workqueue, &fts_data->resume_work);
-        } else if ((blank_enum[0] == blank_value) && (event_enum[0] == event)) {
-            cancel_work_sync(&fts_data->resume_work);
-            fts_ts_suspend(ts_data->dev);
-        } else {
-            FTS_DEBUG("notifier,event:%lu,blank:%d, not care", event, blank_value);
-        }
-   */
-    } else {
-        FTS_ERROR("ts_data/v is null");
-        return -EINVAL;
-    }
-    FTS_FUNC_EXIT();
-    return 0;
-}
-
-
-static int fts_notifier_callback_init(struct fts_ts_data *ts_data)
-{
-    int ret = 0;
-    FTS_FUNC_ENTER();
-#if IS_ENABLED(CONFIG_DRM)
-    ts_data->fb_notif.notifier_call = fb_notifier_callback;
-#if IS_ENABLED(CONFIG_DRM_PANEL)
-    ret = drm_check_dt(ts_data);
-    if (ret) FTS_ERROR("parse drm-panel fail");
-    FTS_INFO("init notifier with drm_panel_notifier_register");
-    if (active_panel) {
-        //UNISOC: Kernel 5.4 gki check fail, not use drm_panel_notifier_register, use ts_suspend
-        //ret = drm_panel_notifier_register(active_panel, &ts_data->fb_notif);
-        if (ret) FTS_ERROR("[DRM]drm_panel_notifier_register fail: %d\n", ret);
-    }
-#else
-    FTS_INFO("init notifier with msm_drm_register_client");
-    ret = msm_drm_register_client(&ts_data->fb_notif);
-    if (ret) FTS_ERROR("[DRM]msm_drm_register_client fail: %d\n", ret);
-#endif //CONFIG_DRM_PANEL
-
-#elif IS_ENABLED(CONFIG_FB)
-    FTS_INFO("init notifier with fb_register_client");
-    ts_data->fb_notif.notifier_call = fb_notifier_callback;
-    ret = fb_register_client(&ts_data->fb_notif);
-    if (ret) {
-        FTS_ERROR("[FB]Unable to register fb_notifier: %d", ret);
-    }
-
-#endif //CONFIG_DRM
-    FTS_FUNC_EXIT();
-    return ret;
-}
-
-static int fts_notifier_callback_exit(struct fts_ts_data *ts_data)
-{
-    FTS_FUNC_ENTER();
-#if IS_ENABLED(CONFIG_DRM)
-#if IS_ENABLED(CONFIG_DRM_PANEL)
-   /*
-    * UNISOC: Kernel 5.4 gki check fail, not use drm_panel_notifier_register, use ts_suspend
-    if (active_panel)
-        drm_panel_notifier_unregister(active_panel, &ts_data->fb_notif);
-    */
-#else
-    if (msm_drm_unregister_client(&ts_data->fb_notif))
-        FTS_ERROR("[DRM]Error occurred while unregistering fb_notifier.");
-#endif
-
-#elif IS_ENABLED(CONFIG_FB)
-    if (fb_unregister_client(&ts_data->fb_notif))
-        FTS_ERROR("[FB]Error occurred while unregistering fb_notifier.");
-#endif //CONFIG_DRM
-    FTS_FUNC_EXIT();
-    return 0;
-}
 
 
 int fts_ts_probe_entry(struct fts_ts_data *ts_data)
@@ -2054,11 +1824,6 @@ int fts_ts_probe_entry(struct fts_ts_data *ts_data)
         FTS_ERROR("create sysfs node fail");
     }
 
-    ret = sysfs_create_link(NULL, &ts_data->dev->kobj, "touchscreen");
-    if (ret) {
-        FTS_ERROR("link touchscreen fail");
-    }
-
     ret = fts_point_report_check_init(ts_data);
     if (ret) {
         FTS_ERROR("init point report check fail");
@@ -2082,7 +1847,6 @@ int fts_ts_probe_entry(struct fts_ts_data *ts_data)
     ret = fts_irq_registration(ts_data);
     if (ret) {
         FTS_ERROR("request irq failed");
-        sysfs_remove_link(NULL, "touchscreen");
         goto err_irq_req;
     }
 
@@ -2099,11 +1863,6 @@ int fts_ts_probe_entry(struct fts_ts_data *ts_data)
     init_completion(&ts_data->pm_completion);
     ts_data->pm_suspend = false;
 #endif
-
-    ret = fts_notifier_callback_init(ts_data);
-    if (ret) {
-        FTS_ERROR("init notifier callback fail");
-    }
 
     FTS_FUNC_EXIT();
     return 0;
@@ -2159,8 +1918,6 @@ int fts_ts_remove_entry(struct fts_ts_data *ts_data)
 #endif
 
     if (ts_data->ts_workqueue) destroy_workqueue(ts_data->ts_workqueue);
-
-    fts_notifier_callback_exit(ts_data);
 
     if (gpio_is_valid(ts_data->pdata->reset_gpio))
         gpio_free(ts_data->pdata->reset_gpio);

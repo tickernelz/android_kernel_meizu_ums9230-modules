@@ -81,7 +81,6 @@ static struct rwreg_operation_t {
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
-bool fts_debug_flag = false;
 
 /*****************************************************************************
 * Static function prototypes
@@ -501,15 +500,12 @@ static ssize_t fts_irq_store(
         fts_esdcheck_resume();
 #endif
         fts_irq_enable();
-        tp_spi_safaMode = false;
     } else if (FTS_SYSFS_ECHO_OFF(buf)) {
         FTS_INFO("disable irq");
 #if FTS_ESDCHECK_EN
         fts_esdcheck_suspend();
 #endif
         fts_irq_disable();
-        tp_spi_safaMode = true;
-        tp_spi_ignSafeModeIrq = true;
     }
     mutex_unlock(&input_dev->mutex);
     return count;
@@ -1139,68 +1135,9 @@ static ssize_t fts_tamode_store(
 
     return count;
 }
-static ssize_t fts_light_suspend_show(struct device *dev,
-				  struct device_attribute *attr, char *buf)
-{
-	struct fts_ts_data *ts_data = dev_get_drvdata(dev);
-
-	return snprintf(buf, PAGE_SIZE, "%s\n",
-		ts_data->suspended ? "true" : "false");
-}
-
-static ssize_t fts_light_suspend_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	unsigned int input;
-	struct fts_ts_data *ts_data = dev_get_drvdata(dev);
-
-	if (kstrtouint(buf, 10, &input))
-		return -EINVAL;
-
-	if (input == 1)
-		fts_ts_suspend(dev);
-	else if (input == 0)
-		queue_work(ts_data->ts_workqueue, &ts_data->resume_work);
-	else
-		return -EINVAL;
-
-	return count;
-}
-
-static ssize_t fts_input_name_show(struct device *dev,
-				  struct device_attribute *attr, char *buf)
-{
-	struct fts_ts_data *ts_data = dev_get_drvdata(dev);
-
-	return snprintf(buf, PAGE_SIZE, "%s\n", ts_data->input_dev->name);
-}
-
-static ssize_t fts_dbg_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%s\n", fts_debug_flag ? "true" : "false");
-}
-
-static ssize_t fts_dbg_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	unsigned int input;
-
-	if (kstrtouint(buf, 10, &input))
-		return -EINVAL;
-
-	if (input == 1)
-		fts_debug_flag = 1;
-	else if (input == 0)
-		fts_debug_flag = 0;
-	else
-		return -EINVAL;
-
-	return count;
-}
 
 /* get the fw version  example:cat fw_version */
-static DEVICE_ATTR(firmware_version, S_IRUGO | S_IWUSR, fts_tpfwver_show, fts_tpfwver_store);
+static DEVICE_ATTR(fts_fw_version, S_IRUGO | S_IWUSR, fts_tpfwver_show, fts_tpfwver_store);
 
 /* read and write register(s)
 *   All data type is **HEX**
@@ -1229,13 +1166,10 @@ static DEVICE_ATTR(fts_log_level, S_IRUGO | S_IWUSR, fts_log_level_show, fts_log
 static DEVICE_ATTR(fts_pen, S_IRUGO | S_IWUSR, fts_pen_show, fts_pen_store);
 static DEVICE_ATTR(fts_touch_size, S_IRUGO | S_IWUSR, fts_touchsize_show, fts_touchsize_store);
 static DEVICE_ATTR(fts_ta_mode, S_IRUGO | S_IWUSR, fts_tamode_show, fts_tamode_store);
-static DEVICE_ATTR(ts_suspend, S_IRUGO | S_IWUSR | S_IWGRP, fts_light_suspend_show, fts_light_suspend_store);
-static DEVICE_ATTR(input_name, 0444, fts_input_name_show, NULL);
-static DEVICE_ATTR(dbg_log, 0644, fts_dbg_show, fts_dbg_store);
 
 /* add your attr in here*/
 static struct attribute *fts_attributes[] = {
-    &dev_attr_firmware_version.attr,
+    &dev_attr_fts_fw_version.attr,
     &dev_attr_fts_rw_reg.attr,
     &dev_attr_fts_dump_reg.attr,
     &dev_attr_fts_upgrade_bin.attr,
@@ -1249,9 +1183,6 @@ static struct attribute *fts_attributes[] = {
     &dev_attr_fts_pen.attr,
     &dev_attr_fts_touch_size.attr,
     &dev_attr_fts_ta_mode.attr,
-    &dev_attr_ts_suspend.attr,
-    &dev_attr_input_name.attr,
-    &dev_attr_dbg_log.attr,
     NULL
 };
 
@@ -1277,7 +1208,6 @@ int fts_create_sysfs(struct fts_ts_data *ts_data)
 
 int fts_remove_sysfs(struct fts_ts_data *ts_data)
 {
-    sysfs_remove_link(NULL, "touchscreen");
     sysfs_remove_group(&ts_data->dev->kobj, &fts_attribute_group);
     return 0;
 }

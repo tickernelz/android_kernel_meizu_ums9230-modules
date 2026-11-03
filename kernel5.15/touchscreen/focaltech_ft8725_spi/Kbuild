@@ -1,5 +1,5 @@
 #
-# focaltech_ft8725_spi.ko
+# focaltech_spi_v4_1.ko
 #
 # Kbuild: for kernel building external module
 #
@@ -12,7 +12,7 @@
 # Source List
 #
 
-KO_MODULE_NAME := focaltech_ft8725_spi_ts
+KO_MODULE_NAME := focaltech_spi_v4_1
 KO_MODULE_PATH := $(src)
 KO_MODULE_SRC  :=
 

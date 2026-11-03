@@ -214,11 +214,6 @@ static int esdcheck_algorithm(struct fts_ts_data *ts_data)
     bool    hardware_reset = 0;
     unsigned long intr_timeout = msecs_to_jiffies(ESD_INTR_INTERVALS);
 
-    if (tp_spi_safaMode == 1) {
-    	FTS_DEBUG("In safe mode, not check esd");
-    	return 0;
-    }
-
     /* 1. esdcheck is interrupt, then return */
     intr_timeout += ts_data->intr_jiffies;
     if (time_before(jiffies, intr_timeout)) {
