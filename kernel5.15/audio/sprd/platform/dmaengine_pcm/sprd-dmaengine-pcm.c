@@ -990,6 +990,12 @@ static int sprd_pcm_open(struct snd_soc_component *component, struct snd_pcm_sub
 		goto err;
         }
 
+	ret = snd_pcm_hw_constraint_minmax(runtime,
+					   SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 0,
+					   substream->dma_buffer.bytes);
+	if (ret < 0)
+		goto err;
+
 	ret = -ENOMEM;
 	rtd->dma_cfg_array = devm_kzalloc(dev, hw_chan * ((
 		runtime->hw.periods_max * sizeof(struct scatterlist))
