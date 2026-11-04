@@ -1579,6 +1579,7 @@ extern void ili_dev_remove(bool flag);
 extern int ili_core_spi_setup(int num);
 extern int ili_interface_dev_init(struct ilitek_hwif_info *hwif);
 extern void ili_interface_dev_exit(struct ilitek_ts_data *ts, bool flag);
+extern void ili_interface_bus_exit(struct ilitek_hwif_info *hwif);
 extern int ili_spi_write_then_read_split(struct spi_device *spi,
 				const void *txbuf, unsigned n_tx,
 				void *rxbuf, unsigned n_rx);

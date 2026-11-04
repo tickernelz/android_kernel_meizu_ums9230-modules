@@ -548,7 +548,10 @@ static void __exit ilitek_plat_dev_exit(void)
 {
 	ILI_INFO("remove plat dev\n");
 	ilitek_ts_virtual_keys_exit();
-	ili_dev_remove(ENABLE);
+	if (ilits)
+		ili_dev_remove(ENABLE);
+	else
+		ili_interface_bus_exit(&hwif);
 }
 
 module_init(ilitek_plat_dev_init);
