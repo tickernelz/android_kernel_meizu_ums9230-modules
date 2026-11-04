@@ -88,6 +88,7 @@ struct sprd_asoc_hook_spk_priv {
 	int rcv_shared_multi_spk;
 	int hook_audio_sense[BOARD_FUNC_MAX];	// record what audio sense is applied in every hook
 	int audio_sense;			// audio_sense set by hal
+	int spk_cnt;
 	spinlock_t lock;
 };
 
@@ -245,7 +246,8 @@ static void hook_gpio_pulse_control(unsigned int gpio, unsigned int mode)
 
 static int hook_general_spk(int id, int on)
 {
-	int gpio, mode;
+	int gpio, mode, pa = id;
+	int sense = hook_spk_priv.audio_sense;
 #if 0
 	sp_asoc_pr_info("%s enter\n", __func__);
 	if (extral_iic_pa_en == 1) {
@@ -274,20 +276,30 @@ static int hook_general_spk(int id, int on)
 		return HOOK_OK;
 	}
 #endif
-	gpio = hook_spk_priv.gpio[id];
+	if (hook_spk_priv.spk_cnt != 2) {
+		if (id == BOARD_FUNC_EAR)
+			pa = BOARD_FUNC_SPK1;
+		else if (id < BOARD_FUNC_EAR &&
+			 (sense == AUDIO_SENSE_VOICE || sense == AUDIO_SENSE_VOIP))
+			pa = BOARD_FUNC_SPK;
+	}
+
+	gpio = hook_spk_priv.gpio[pa];
 	if (gpio < 0) {
 		pr_err("%s gpio is invalid!\n", __func__);
 		return -EINVAL;
 	}
-	mode = hook_spk_priv.priv_data[id];
+	mode = hook_spk_priv.priv_data[pa];
 	if (mode > GENERAL_SPK_MODE)
 		mode = 0;
-	pr_info("%s id: %d, gpio: %d, mode: %d, on: %d\n",
-		 __func__, id, gpio, mode, on);
+	pr_info("%s id: %d, pa: %d, gpio: %d, mode: %d, on: %d, audio_sense: %d\n",
+		 __func__, id, pa, gpio, mode, on, sense);
 
 	/* Off */
 	if (!on) {
 		gpio_set_value(gpio, !EN_LEVEL);
+		hook_spk_priv.hook_audio_sense[id] = AUDIO_SENSE_CLOSE;
+		hook_spk_priv.state[id] = 0;
 		/* aviod pulses less than 1ms */
 		msleep(2);
 		return HOOK_OK;
@@ -299,7 +311,9 @@ static int hook_general_spk(int id, int on)
 		pr_info("%s mode: %d, select_mode: %d\n",
 			__func__, mode, select_mode);
 	}
+	hook_spk_priv.state[id] = mode;
 	hook_gpio_pulse_control(gpio, mode);
+	hook_spk_priv.hook_audio_sense[id] = sense;
 
 	/* When the first time open speaker path and play a very short sound,
 	 * the sound can't be heard. So add a delay here to make sure the AMP
@@ -473,10 +487,64 @@ static int hook_spk_i2c(int id, int on)
 }
 #endif
 
+#ifndef CONFIG_SND_SOC_FS1815
+static void hook_ear_restore(int on)
+{
+	hook_general_spk(BOARD_FUNC_EAR, on);
+	if (!hook_spk_priv.rcv_shared_multi_spk)
+		return;
+	select_mode = on > 0 ? hook_spk_priv.priv_data[BOARD_FUNC_EAR] : 0;
+	hook_general_spk(BOARD_FUNC_SPK, on);
+	select_mode = 0;
+}
+
+static int hook_general_ctl(int id, int on)
+{
+	int *state = hook_spk_priv.state;
+	int shared = hook_spk_priv.rcv_shared_multi_spk;
+
+	if (id == BOARD_FUNC_SPK && shared)
+		return HOOK_OK;
+
+	pr_info("%s id: %d, on: %d\n", __func__, id, on);
+	switch (id) {
+	case BOARD_FUNC_EAR:
+		if (state[BOARD_FUNC_SPK1] > 0)
+			state[BOARD_FUNC_EAR] = on > 0 ? -1 : 0;
+		else
+			hook_ear_restore(on);
+		break;
+	case BOARD_FUNC_SPK1:
+		if (on && state[BOARD_FUNC_EAR] > 0) {
+			hook_ear_restore(0);
+			state[BOARD_FUNC_EAR] = -1;
+		}
+		hook_general_spk(BOARD_FUNC_SPK1, on);
+		if (shared) {
+			select_mode = 0;
+			hook_general_spk(BOARD_FUNC_SPK, on);
+		}
+		if (!on && state[BOARD_FUNC_EAR] == -1)
+			hook_ear_restore(1);
+		break;
+	default:
+		hook_general_spk(id, on);
+		break;
+	}
+	pr_info("%s hook state {%d, %d, %d}\n", __func__,
+		state[BOARD_FUNC_SPK], state[BOARD_FUNC_SPK1],
+		state[BOARD_FUNC_EAR]);
+
+	return HOOK_OK;
+}
+#endif
+
 static struct sprd_asoc_ext_hook_map ext_hook_arr[] = {
 	{"general_speaker", hook_general_spk, EN_LEVEL},
 #ifdef CONFIG_SND_SOC_FS1815
 	{"i2c_speaker", hook_spk_i2c, EN_LEVEL},
+#else
+	{"rcv_through_ext_spk", hook_general_ctl, EN_LEVEL},
 #endif
 };
 
@@ -527,6 +595,7 @@ static int sprd_asoc_card_parse_hook(struct device *dev,
 			 spk_cnt, BOARD_FUNC_MAX);
 		spk_cnt = BOARD_FUNC_MAX;
 	}
+	hook_spk_priv.spk_cnt = spk_cnt;
 
 	spin_lock_init(&hook_spk_priv.lock);
 
