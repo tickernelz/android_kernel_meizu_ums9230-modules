@@ -1616,6 +1616,12 @@ static int sprd_pcm_hw_params(struct snd_soc_component *component,
 
 	pm_dma = get_pm_dma();
 
+	if (substream->dma_buffer.area && totsize > substream->dma_buffer.bytes) {
+		pr_err("%s: buffer %zu bytes exceeds the %zu byte DMA buffer\n",
+		       __func__, totsize, substream->dma_buffer.bytes);
+		return -EINVAL;
+	}
+
 	sp_asoc_pr_info("(pcm) %s, cpudai_id=%d\n", __func__,
 			asoc_rtd_to_cpu(srtd, 0)->id);
 	if (be_rtd && asoc_rtd_to_cpu(be_rtd, 0)->id == AGCP_IIS0_TX)
