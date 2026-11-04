@@ -590,7 +590,7 @@ int ili_core_spi_setup(int num)
 	return 0;
 }
 
-static int ilitek_spi_probe(struct spi_device *spi)
+static int ilitek_spi_probe_one(struct spi_device *spi)
 {
 	struct touch_bus_info *info =
 	container_of(to_spi_driver(spi->dev.driver),
@@ -751,6 +751,15 @@ static int ilitek_spi_probe(struct spi_device *spi)
 	return info->hwif->plat_probe();
 }
 
+static int ilitek_spi_probe(struct spi_device *spi)
+{
+	int ret = ilitek_spi_probe_one(spi);
+
+	if (ret < 0)
+		ilits = NULL;
+	return ret;
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
 static int ilitek_spi_remove(struct spi_device *spi)
 {
@@ -800,17 +809,22 @@ int ili_interface_dev_init(struct ilitek_hwif_info *hwif)
 	return spi_register_driver(&info->bus_driver);
 }
 
+void ili_interface_bus_exit(struct ilitek_hwif_info *hwif)
+{
+	struct touch_bus_info *info = (struct touch_bus_info *)hwif->info;
+
+	spi_unregister_driver(&info->bus_driver);
+	ipio_kfree((void **)&info);
+	hwif->info = NULL;
+}
+
 void ili_interface_dev_exit(struct ilitek_ts_data *ts, bool flag)
 {
-	struct touch_bus_info *info = (struct touch_bus_info *)ilits->hwif->info;
-
 	ILI_INFO("remove spi dev\n");
 	kfree(ilits->update_buf);
 	kfree(ilits->spi_tx);
 	kfree(ilits->spi_rx);
 
-	if (flag == ENABLE) {
-		spi_unregister_driver(&info->bus_driver);
-		ipio_kfree((void **)&info);
-	}
+	if (flag == ENABLE)
+		ili_interface_bus_exit(ilits->hwif);
 }
