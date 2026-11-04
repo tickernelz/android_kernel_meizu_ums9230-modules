@@ -11,6 +11,43 @@
 
 static struct sprd_fcc_priv fcc_info;
 
+static struct fcc_power_bo g_fcc_power_table_base[] = {
+	{
+		.country = "UY",
+		.num = 4,
+		.power_backoff = {
+			{0,   1, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+			{1,   2, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+			{0,   1, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+			{1,   4, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+		},
+	},
+	{
+		.country = "MX",
+		.num = 4,
+		.power_backoff = {
+			{0,   5, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+			{1,   6, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+			{0,   7, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+			{1,   8, 0, { {0,   1}, {1,   2}, {2,   3}, {3,   4}, {4,   5}, {5,   6}, {6,   7} } },
+		},
+	},
+	{
+		.country = "CN",
+		.num = 8,
+		.power_backoff = {
+			{1,   1, 0, { {0, 127}, {1,  13}, {2,  12}, {3, 127}, {4, 127}, {5, 127}, {6, 127} } },
+			{1,   2, 0, { {0, 127}, {1,  13}, {2,  12}, {3, 127}, {4, 127}, {5, 127}, {6, 127} } },
+			{1,  10, 0, { {0, 127}, {1,  13}, {2,  12}, {3, 127}, {4, 127}, {5, 127}, {6, 127} } },
+			{1,  11, 0, { {0, 127}, {1,  13}, {2,  12}, {3, 127}, {4, 127}, {5, 127}, {6, 127} } },
+			{1,  36, 0, { {0, 127}, {1, 127}, {2, 127}, {3, 127}, {4, 127}, {5,  11}, {6,  10} } },
+			{1,  64, 0, { {0, 127}, {1, 127}, {2, 127}, {3, 127}, {4, 127}, {5,  11}, {6,  10} } },
+			{1, 100, 0, { {0, 127}, {1, 127}, {2, 127}, {3, 127}, {4, 127}, {5,  11}, {6,  10} } },
+			{1, 140, 0, { {0, 127}, {1, 127}, {2, 127}, {3, 127}, {4, 127}, {5,  11}, {6,  10} } },
+		},
+	},
+};
+
 static struct fcc_power_bo g_fcc_power_table[MAX_FCC_COUNTRY_NUM] = {
 //FCC
 	{
@@ -24550,7 +24587,25 @@ void sc2355_fcc_match_country(struct sprd_priv *priv, const char *alpha2)
 
 	mutex_lock(&fcc_info.lock);
 
-	if(prj_name != NULL &&
+	if (!prj_name) {
+		for (i = 0; i < ARRAY_SIZE(g_fcc_power_table_base); i++) {
+			if (g_fcc_power_table_base[i].country[0] == alpha2[0] &&
+				g_fcc_power_table_base[i].country[1] == alpha2[1]) {
+				pr_info("matched fcc country %s!\n", alpha2);
+				found_country = true;
+				last_power_bo = fcc_info.cur_power_bo;
+				fcc_info.cur_power_bo = &g_fcc_power_table_base[i];
+				if (last_power_bo && last_power_bo != fcc_info.cur_power_bo)
+					fcc_info.flag = true;
+				if (fcc_info.flag) {
+					need_refresh = true;
+					channel = fcc_info.channel;
+					bw = fcc_info.bw;
+				}
+				break;
+			}
+		}
+	} else if(prj_name != NULL &&
 		((strncmp(prj_name, "22716", 5) == 0)||
 		(strncmp(prj_name, "22717", 5) == 0)||
 		(strncmp(prj_name, "22718", 5) == 0)||
