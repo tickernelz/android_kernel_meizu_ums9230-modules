@@ -880,6 +880,6 @@ int get_wifi_config_param(struct sprd_priv *priv, struct merl_wifi_conf_t *p)
 		}
 	}else {
 		printk("No project number was obtained, default parameters apply");
-			return wifi_nvm_parse(priv, SYSTEM_WIFI_CONFIG_FILE_LATTE_CD, (void *)p);
+			return wifi_nvm_parse(priv, SYSTEM_WIFI_CONFIG_FILE, (void *)p);
 	}
 }
